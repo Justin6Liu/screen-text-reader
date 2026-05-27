@@ -3,17 +3,19 @@ package com.screenreader.app.runtime
 import android.content.Context
 import com.screenreader.app.accessibility.ReaderAccessibilityService
 import com.screenreader.app.ocr.OcrEngine
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 
 object ScreenReaderController {
 
     private val worker = Executors.newSingleThreadExecutor()
+    private val listeners = CopyOnWriteArraySet<StateListener>()
 
     @Volatile
     private var accessibilityReady = false
 
     @Volatile
-    private var busy = false
+    private var state: ReaderState = ReaderState.IDLE
 
     @Volatile
     private var lastStatus: String = "Ready. Grant permissions, start the overlay, then tap the floating button."
@@ -24,7 +26,12 @@ object ScreenReaderController {
     fun initialize(context: Context) {
         val applicationContext = context.applicationContext
         if (speechManager == null) {
-            speechManager = SpeechManager(applicationContext) { updateStatus(it) }
+            speechManager = SpeechManager(
+                applicationContext,
+                onStatusChanged = { updateStatus(it) },
+                onSpeechStarted = { updateState(ReaderState.SPEAKING) },
+                onSpeechFinished = { onSpeechFinished() }
+            )
         }
         if (ocrEngine == null) {
             ocrEngine = OcrEngine(applicationContext)
@@ -45,8 +52,12 @@ object ScreenReaderController {
     fun isAccessibilityReady(): Boolean = accessibilityReady && ReaderAccessibilityService.current() != null
 
     fun captureAndReadAloud() {
-        if (busy) {
+        if (state == ReaderState.PROCESSING) {
             updateStatus("Already processing. Please wait.")
+            return
+        }
+        if (state == ReaderState.SPEAKING) {
+            stopSpeaking()
             return
         }
 
@@ -56,7 +67,7 @@ object ScreenReaderController {
             return
         }
 
-        busy = true
+        updateState(ReaderState.PROCESSING)
         updateStatus("Capturing screen...")
         service.captureScreen { captureResult ->
             captureResult.onSuccess { bitmap ->
@@ -70,8 +81,10 @@ object ScreenReaderController {
                                 finishWithStatus("No text found on screen.")
                             } else {
                                 updateStatus("Reading aloud...")
-                                speechManager?.speak(text)
-                                finishWithStatus("Reading recognized text.")
+                                val started = speechManager?.speak(text) == true
+                                if (!started) {
+                                    finishWithStatus("Speech is not ready yet.")
+                                }
                             }
                         }
                         ?.onFailure { error ->
@@ -90,8 +103,8 @@ object ScreenReaderController {
     }
 
     fun readDemoText() {
-        speechManager?.speak("屏幕朗读测试。请先确认中文语音可以正常播放。")
-        updateStatus("Playing demo speech.")
+        val started = speechManager?.speak("屏幕朗读测试。请先确认中文语音可以正常播放。") == true
+        updateStatus(if (started) "Playing demo speech." else "Speech is not ready yet.")
     }
 
     fun getUiStatus(): String = lastStatus
@@ -100,12 +113,47 @@ object ScreenReaderController {
         updateStatus(message)
     }
 
+    fun isSpeaking(): Boolean = state == ReaderState.SPEAKING
+
+    fun isProcessing(): Boolean = state == ReaderState.PROCESSING
+
+    fun addStateListener(listener: StateListener) {
+        listeners.add(listener)
+        listener.onStateChanged(state)
+    }
+
+    fun removeStateListener(listener: StateListener) {
+        listeners.remove(listener)
+    }
+
     private fun finishWithStatus(message: String) {
-        busy = false
+        updateState(ReaderState.IDLE)
         updateStatus(message)
     }
 
     private fun updateStatus(message: String) {
         lastStatus = message
+    }
+
+    private fun updateState(newState: ReaderState) {
+        state = newState
+        listeners.forEach { it.onStateChanged(newState) }
+    }
+
+    private fun onSpeechFinished() {
+        if (state == ReaderState.SPEAKING) {
+            updateState(ReaderState.IDLE)
+            updateStatus("Ready for the next read.")
+        }
+    }
+
+    interface StateListener {
+        fun onStateChanged(state: ReaderState)
+    }
+
+    enum class ReaderState {
+        IDLE,
+        PROCESSING,
+        SPEAKING
     }
 }

@@ -11,7 +11,12 @@
     <string name="stop_overlay">Stop Floating Button</string>
     <string name="test_speech">Test Chinese Speech</string>
     <string name="stop_speech">Stop Speech</string>
-    <string name="overlay_button_label">Read screen text</string>
+    <string name="overlay_button_read_label">Read screen text</string>
+    <string name="overlay_button_processing_label">Recognizing screen text</string>
+    <string name="overlay_button_stop_label">Stop reading aloud</string>
+    <string name="overlay_button_read_text">Read</string>
+    <string name="overlay_button_processing_text">Working</string>
+    <string name="overlay_button_stop_text">Stop</string>
     <string name="notification_title">Screen Reader is running</string>
     <string name="notification_text">Tap the floating button to read text. Use this notification to stop it if needed.</string>
     <string name="notification_channel_name">Screen Reader Overlay</string>

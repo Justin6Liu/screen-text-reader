@@ -18,21 +18,26 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.screenreader.app.MainActivity
 import com.screenreader.app.R
 import com.screenreader.app.runtime.ScreenReaderController
+import com.screenreader.app.runtime.ScreenReaderController.ReaderState
 
-class OverlayService : Service() {
+class OverlayService : Service(), ScreenReaderController.StateListener {
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+    private var overlayButton: ImageButton? = null
+    private var overlayLabel: TextView? = null
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         ScreenReaderController.initialize(applicationContext)
+        ScreenReaderController.addStateListener(this)
         createNotificationChannel()
         startAsForegroundService()
         if (!Settings.canDrawOverlays(this)) {
@@ -53,6 +58,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        ScreenReaderController.removeStateListener(this)
         hideOverlay()
         isRunning = false
         super.onDestroy()
@@ -67,6 +73,7 @@ class OverlayService : Service() {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.view_overlay_button, null)
         val button = view.findViewById<ImageButton>(R.id.overlayButton)
+        val label = view.findViewById<TextView>(R.id.overlayLabel)
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -84,15 +91,18 @@ class OverlayService : Service() {
         button.setOnClickListener {
             ScreenReaderController.captureAndReadAloud()
         }
-        button.setOnLongClickListener {
-            ScreenReaderController.stopSpeaking()
-            true
-        }
         installDragHandler(view, params)
 
         try {
             windowManager.addView(view, params)
             overlayView = view
+            overlayButton = button
+            overlayLabel = label
+            updateOverlayUi(
+                if (ScreenReaderController.isSpeaking()) ReaderState.SPEAKING
+                else if (ScreenReaderController.isProcessing()) ReaderState.PROCESSING
+                else ReaderState.IDLE
+            )
             ScreenReaderController.reportStatus("Floating button started.")
         } catch (error: Throwable) {
             val message = error.message ?: "Could not show floating button."
@@ -147,6 +157,8 @@ class OverlayService : Service() {
             windowManager.removeView(view)
         }
         overlayView = null
+        overlayButton = null
+        overlayLabel = null
     }
 
     private fun buildNotification(): Notification {
@@ -205,6 +217,37 @@ class OverlayService : Service() {
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    override fun onStateChanged(state: ReaderState) {
+        overlayView?.post {
+            updateOverlayUi(state)
+        }
+    }
+
+    private fun updateOverlayUi(state: ReaderState) {
+        when (state) {
+            ReaderState.IDLE -> {
+                overlayButton?.setImageResource(R.drawable.ic_overlay_play)
+                overlayButton?.contentDescription = getString(R.string.overlay_button_read_label)
+                overlayLabel?.text = getString(R.string.overlay_button_read_text)
+                overlayButton?.alpha = 1.0f
+            }
+
+            ReaderState.PROCESSING -> {
+                overlayButton?.setImageResource(R.drawable.ic_overlay_busy)
+                overlayButton?.contentDescription = getString(R.string.overlay_button_processing_label)
+                overlayLabel?.text = getString(R.string.overlay_button_processing_text)
+                overlayButton?.alpha = 0.85f
+            }
+
+            ReaderState.SPEAKING -> {
+                overlayButton?.setImageResource(R.drawable.ic_overlay_pause)
+                overlayButton?.contentDescription = getString(R.string.overlay_button_stop_label)
+                overlayLabel?.text = getString(R.string.overlay_button_stop_text)
+                overlayButton?.alpha = 1.0f
+            }
         }
     }
 
