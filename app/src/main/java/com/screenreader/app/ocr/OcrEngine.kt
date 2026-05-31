@@ -76,7 +76,7 @@ class OcrEngine(context: Context) {
             .map { row -> row.sortedBy { it.bounds.left } }
             .sortedBy { row -> row.minOf { it.bounds.top } }
 
-        val paragraphs = mutableListOf<ParagraphEntry>()
+        val regions = mutableListOf<ParagraphEntry>()
         var previousRowBottom: Int? = null
         var previousRowRight: Int? = null
         var previousRowHeight: Double? = null
@@ -102,12 +102,13 @@ class OcrEngine(context: Context) {
                     (previousRowRight != null && rowLeft + columnGap < previousRowRight)
 
             if (startsNewParagraph) {
-                paragraphs += ParagraphEntry(rowText, rowBounds)
+                regions += ParagraphEntry(rowText, rowBounds, rowHeight)
             } else {
-                val previousParagraph = paragraphs.removeLast()
-                paragraphs += ParagraphEntry(
-                    text = mergeParagraph(previousParagraph.text, rowText),
-                    bounds = previousParagraph.bounds.unionWith(rowBounds)
+                val previousRegion = regions.removeLast()
+                regions += ParagraphEntry(
+                    text = mergeParagraph(previousRegion.text, rowText),
+                    bounds = previousRegion.bounds.unionWith(rowBounds),
+                    averageHeight = mergeAverageHeight(previousRegion.averageHeight, rowHeight)
                 )
             }
 
@@ -115,6 +116,8 @@ class OcrEngine(context: Context) {
             previousRowRight = row.maxOf { it.bounds.right }
             previousRowHeight = rowHeight
         }
+
+        val paragraphs = mergeRegionsIntoParagraphs(regions, baselineHeight)
 
         return OcrOutput(
             text = paragraphs.joinToString(separator = "\n\n") { it.text }.trim(),
@@ -155,6 +158,40 @@ class OcrEngine(context: Context) {
         }
 
         return pieces.joinToString(separator = "，")
+    }
+
+    private fun mergeRegionsIntoParagraphs(
+        regions: List<ParagraphEntry>,
+        baselineHeight: Double
+    ): List<ParagraphEntry> {
+        if (regions.isEmpty()) return emptyList()
+
+        val merged = mutableListOf<ParagraphEntry>()
+        for (region in regions.sortedBy { it.bounds.top }) {
+            val previous = merged.lastOrNull()
+            if (previous == null) {
+                merged += region
+                continue
+            }
+
+            val verticalGap = region.bounds.top - previous.bounds.bottom
+            val localHeight = max(previous.averageHeight, region.averageHeight)
+            val mergeGap = max(localHeight * 1.9, baselineHeight * 1.5).roundToInt().coerceAtLeast(56)
+            val leftAligned = abs(region.bounds.left - previous.bounds.left) <= max(localHeight * 2.2, 72.0).roundToInt()
+            val horizontalOverlap = horizontalOverlap(previous.bounds, region.bounds)
+            val overlapWideEnough = horizontalOverlap >= minOf(previous.bounds.width(), region.bounds.width()) * 0.28
+
+            if (verticalGap <= mergeGap && (leftAligned || overlapWideEnough)) {
+                merged[merged.lastIndex] = ParagraphEntry(
+                    text = mergeParagraph(previous.text, region.text),
+                    bounds = previous.bounds.unionWith(region.bounds),
+                    averageHeight = mergeAverageHeight(previous.averageHeight, region.averageHeight)
+                )
+            } else {
+                merged += region
+            }
+        }
+        return merged
     }
 
     private fun mergeParagraph(existing: String, next: String): String {
@@ -215,6 +252,14 @@ class OcrEngine(context: Context) {
         }
     }
 
+    private fun horizontalOverlap(first: Rect, second: Rect): Int {
+        return minOf(first.right, second.right) - maxOf(first.left, second.left)
+    }
+
+    private fun mergeAverageHeight(first: Double, second: Double): Double {
+        return (first + second) / 2.0
+    }
+
     private data class LineEntry(
         val text: String,
         val bounds: Rect
@@ -225,7 +270,8 @@ class OcrEngine(context: Context) {
 
     private data class ParagraphEntry(
         val text: String,
-        val bounds: Rect
+        val bounds: Rect,
+        val averageHeight: Double
     )
 
     private data class ScaledBitmap(
