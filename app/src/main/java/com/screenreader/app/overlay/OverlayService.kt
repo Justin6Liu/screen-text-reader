@@ -11,7 +11,9 @@ import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.provider.Settings
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -23,21 +25,29 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.screenreader.app.MainActivity
 import com.screenreader.app.R
+import com.screenreader.app.ocr.OcrDebugSnapshot
 import com.screenreader.app.runtime.ScreenReaderController
 import com.screenreader.app.runtime.ScreenReaderController.ReaderState
 
-class OverlayService : Service(), ScreenReaderController.StateListener {
+class OverlayService : Service(), ScreenReaderController.StateListener, ScreenReaderController.DebugListener {
 
     private lateinit var windowManager: WindowManager
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var overlayView: View? = null
     private var overlayButton: ImageButton? = null
     private var overlayLabel: TextView? = null
+    private var debugOverlayView: OcrDebugOverlayView? = null
+
+    private val clearDebugOverlay = Runnable {
+        hideDebugOverlay()
+    }
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         ScreenReaderController.initialize(applicationContext)
         ScreenReaderController.addStateListener(this)
+        ScreenReaderController.addDebugListener(this)
         createNotificationChannel()
         startAsForegroundService()
         if (!Settings.canDrawOverlays(this)) {
@@ -59,7 +69,9 @@ class OverlayService : Service(), ScreenReaderController.StateListener {
 
     override fun onDestroy() {
         ScreenReaderController.removeStateListener(this)
+        ScreenReaderController.removeDebugListener(this)
         hideOverlay()
+        hideDebugOverlay()
         isRunning = false
         super.onDestroy()
     }
@@ -161,6 +173,33 @@ class OverlayService : Service(), ScreenReaderController.StateListener {
         overlayLabel = null
     }
 
+    private fun showDebugOverlay(snapshot: OcrDebugSnapshot) {
+        if (debugOverlayView == null) {
+            debugOverlayView = OcrDebugOverlayView(this)
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            )
+            windowManager.addView(debugOverlayView, params)
+        }
+        debugOverlayView?.updateSnapshot(snapshot)
+        mainHandler.removeCallbacks(clearDebugOverlay)
+        mainHandler.postDelayed(clearDebugOverlay, 8000L)
+    }
+
+    private fun hideDebugOverlay() {
+        mainHandler.removeCallbacks(clearDebugOverlay)
+        debugOverlayView?.let { view ->
+            windowManager.removeView(view)
+        }
+        debugOverlayView = null
+    }
+
     private fun buildNotification(): Notification {
         val openAppIntent = PendingIntent.getActivity(
             this,
@@ -223,6 +262,16 @@ class OverlayService : Service(), ScreenReaderController.StateListener {
     override fun onStateChanged(state: ReaderState) {
         overlayView?.post {
             updateOverlayUi(state)
+        }
+    }
+
+    override fun onDebugSnapshot(snapshot: OcrDebugSnapshot?) {
+        mainHandler.post {
+            if (snapshot == null) {
+                hideDebugOverlay()
+            } else {
+                showDebugOverlay(snapshot)
+            }
         }
     }
 

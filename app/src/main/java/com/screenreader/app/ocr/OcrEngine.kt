@@ -16,29 +16,29 @@ class OcrEngine(context: Context) {
 
     private val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
 
-    fun recognize(bitmap: Bitmap): Result<String> {
+    fun recognize(bitmap: Bitmap): Result<OcrOutput> {
         return runCatching {
             val scaledBitmap = downscale(bitmap)
-            val image = InputImage.fromBitmap(scaledBitmap, 0)
+            val image = InputImage.fromBitmap(scaledBitmap.bitmap, 0)
             val result = Tasks.await(recognizer.process(image))
-            buildReadableText(result).trim()
+            buildReadableResult(result, scaledBitmap.bitmap.width, scaledBitmap.bitmap.height)
         }
     }
 
-    private fun downscale(bitmap: Bitmap): Bitmap {
+    private fun downscale(bitmap: Bitmap): ScaledBitmap {
         val maxDimension = 1600
         val width = bitmap.width
         val height = bitmap.height
         val longestSide = maxOf(width, height)
-        if (longestSide <= maxDimension) return bitmap
+        if (longestSide <= maxDimension) return ScaledBitmap(bitmap)
 
         val scale = maxDimension.toFloat() / longestSide.toFloat()
         val scaledWidth = (width * scale).toInt().coerceAtLeast(1)
         val scaledHeight = (height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true)
+        return ScaledBitmap(Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true))
     }
 
-    private fun buildReadableText(result: Text): String {
+    private fun buildReadableResult(result: Text, imageWidth: Int, imageHeight: Int): OcrOutput {
         val lineEntries = result.textBlocks
             .flatMap { block ->
                 block.lines.mapNotNull { line ->
@@ -53,7 +53,7 @@ class OcrEngine(context: Context) {
             }
 
         if (lineEntries.isEmpty()) {
-            return result.text
+            return OcrOutput(result.text.trim(), OcrDebugSnapshot(imageWidth, imageHeight, emptyList(), emptyList()))
         }
 
         val baselineHeight = lineEntries.map { it.bounds.height() }.medianOrAverage().coerceAtLeast(1.0)
@@ -76,7 +76,7 @@ class OcrEngine(context: Context) {
             .map { row -> row.sortedBy { it.bounds.left } }
             .sortedBy { row -> row.minOf { it.bounds.top } }
 
-        val chunks = mutableListOf<String>()
+        val paragraphs = mutableListOf<ParagraphEntry>()
         var previousRowBottom: Int? = null
         var previousRowRight: Int? = null
         var previousRowHeight: Double? = null
@@ -94,6 +94,7 @@ class OcrEngine(context: Context) {
                 .coerceAtLeast(260)
             val rowText = buildRowText(row, columnGap)
             if (rowText.isBlank()) continue
+            val rowBounds = row.unionBounds()
 
             val startsNewParagraph =
                 previousRowBottom == null ||
@@ -101,10 +102,13 @@ class OcrEngine(context: Context) {
                     (previousRowRight != null && rowLeft + columnGap < previousRowRight)
 
             if (startsNewParagraph) {
-                chunks += rowText
+                paragraphs += ParagraphEntry(rowText, rowBounds)
             } else {
-                val merged = mergeParagraph(chunks.removeLast(), rowText)
-                chunks += merged
+                val previousParagraph = paragraphs.removeLast()
+                paragraphs += ParagraphEntry(
+                    text = mergeParagraph(previousParagraph.text, rowText),
+                    bounds = previousParagraph.bounds.unionWith(rowBounds)
+                )
             }
 
             previousRowBottom = rowBottom
@@ -112,7 +116,15 @@ class OcrEngine(context: Context) {
             previousRowHeight = rowHeight
         }
 
-        return chunks.joinToString(separator = "\n\n")
+        return OcrOutput(
+            text = paragraphs.joinToString(separator = "\n\n") { it.text }.trim(),
+            debugSnapshot = OcrDebugSnapshot(
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+                lineBounds = lineEntries.map { Rect(it.bounds) },
+                paragraphBounds = paragraphs.map { Rect(it.bounds) }
+            )
+        )
     }
 
     private fun buildRowText(row: List<LineEntry>, columnGap: Int): String {
@@ -184,6 +196,14 @@ class OcrEngine(context: Context) {
         return map { it.height }.average().takeIf { !it.isNaN() } ?: 0.0
     }
 
+    private fun List<LineEntry>.unionBounds(): Rect {
+        val left = minOf { it.bounds.left }
+        val top = minOf { it.bounds.top }
+        val right = maxOf { it.bounds.right }
+        val bottom = maxOf { it.bounds.bottom }
+        return Rect(left, top, right, bottom)
+    }
+
     private fun List<Int>.medianOrAverage(): Double {
         if (isEmpty()) return 0.0
         val sorted = sorted()
@@ -201,5 +221,23 @@ class OcrEngine(context: Context) {
     ) {
         val height: Int
             get() = bounds.height()
+    }
+
+    private data class ParagraphEntry(
+        val text: String,
+        val bounds: Rect
+    )
+
+    private data class ScaledBitmap(
+        val bitmap: Bitmap
+    )
+
+    private fun Rect.unionWith(other: Rect): Rect {
+        return Rect(
+            minOf(left, other.left),
+            minOf(top, other.top),
+            maxOf(right, other.right),
+            maxOf(bottom, other.bottom)
+        )
     }
 }

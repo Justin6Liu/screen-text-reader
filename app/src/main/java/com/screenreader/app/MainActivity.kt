@@ -10,12 +10,15 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.CompoundButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.screenreader.app.overlay.OverlayService
+import com.screenreader.app.runtime.AppPreferences
 import com.screenreader.app.runtime.ScreenReaderController
 
 class MainActivity : AppCompatActivity() {
@@ -29,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stopOverlayButton: Button
     private lateinit var stopSpeechButton: Button
     private lateinit var testReadButton: Button
+    private lateinit var debugModeCheckBox: CheckBox
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -48,6 +52,14 @@ class MainActivity : AppCompatActivity() {
         stopOverlayButton = findViewById(R.id.stopOverlayButton)
         stopSpeechButton = findViewById(R.id.stopSpeechButton)
         testReadButton = findViewById(R.id.testReadButton)
+        debugModeCheckBox = findViewById(R.id.debugModeCheckBox)
+
+        debugModeCheckBox.isChecked = AppPreferences.isOcrDebugModeEnabled(this)
+        debugModeCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            AppPreferences.setOcrDebugModeEnabled(this, isChecked)
+            ScreenReaderController.setOcrDebugModeEnabled(isChecked)
+            refreshStatus()
+        }
 
         overlayPermissionButton.setOnClickListener {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, packageUri()))
@@ -105,7 +117,8 @@ class MainActivity : AppCompatActivity() {
             appendLine("Overlay permission: ${if (overlayGranted) "Ready" else "Missing"}")
             appendLine("Accessibility service: ${if (accessibilityReady) "Connected" else "Not connected"}")
             appendLine("Overlay service: ${if (overlayRunning) "Running" else "Stopped"}")
-            append("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
+            appendLine("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
+            append("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
         }
 
         speechStatusText.text = ScreenReaderController.getUiStatus()

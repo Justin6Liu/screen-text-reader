@@ -1,7 +1,9 @@
 package com.screenreader.app.runtime
 
 import android.content.Context
+import com.screenreader.app.ocr.OcrDebugSnapshot
 import com.screenreader.app.accessibility.ReaderAccessibilityService
+import com.screenreader.app.ocr.OcrOutput
 import com.screenreader.app.ocr.OcrEngine
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
@@ -10,7 +12,10 @@ object ScreenReaderController {
 
     private val worker = Executors.newSingleThreadExecutor()
     private val listeners = CopyOnWriteArraySet<StateListener>()
+    private val debugListeners = CopyOnWriteArraySet<DebugListener>()
 
+    @Volatile
+    private var appContext: Context? = null
     @Volatile
     private var accessibilityReady = false
 
@@ -25,6 +30,7 @@ object ScreenReaderController {
 
     fun initialize(context: Context) {
         val applicationContext = context.applicationContext
+        appContext = applicationContext
         if (speechManager == null) {
             speechManager = SpeechManager(
                 applicationContext,
@@ -68,6 +74,7 @@ object ScreenReaderController {
         }
 
         updateState(ReaderState.PROCESSING)
+        emitDebugSnapshot(null)
         updateStatus("Capturing screen...")
         service.captureScreen { captureResult ->
             captureResult.onSuccess { bitmap ->
@@ -76,12 +83,13 @@ object ScreenReaderController {
                     val result = ocrEngine?.recognize(bitmap)
                     bitmap.recycle()
                     result
-                        ?.onSuccess { text ->
-                            if (text.isBlank()) {
+                        ?.onSuccess { output ->
+                            maybeEmitDebugSnapshot(output.debugSnapshot)
+                            if (output.text.isBlank()) {
                                 finishWithStatus("No text found on screen.")
                             } else {
                                 updateStatus("Reading aloud...")
-                                val started = speechManager?.speak(text) == true
+                                val started = speechManager?.speak(output.text) == true
                                 if (!started) {
                                     finishWithStatus("Speech is not ready yet.")
                                 }
@@ -113,6 +121,12 @@ object ScreenReaderController {
         updateStatus(message)
     }
 
+    fun setOcrDebugModeEnabled(enabled: Boolean) {
+        if (!enabled) {
+            emitDebugSnapshot(null)
+        }
+    }
+
     fun isSpeaking(): Boolean = state == ReaderState.SPEAKING
 
     fun isProcessing(): Boolean = state == ReaderState.PROCESSING
@@ -124,6 +138,14 @@ object ScreenReaderController {
 
     fun removeStateListener(listener: StateListener) {
         listeners.remove(listener)
+    }
+
+    fun addDebugListener(listener: DebugListener) {
+        debugListeners.add(listener)
+    }
+
+    fun removeDebugListener(listener: DebugListener) {
+        debugListeners.remove(listener)
     }
 
     private fun finishWithStatus(message: String) {
@@ -147,8 +169,25 @@ object ScreenReaderController {
         }
     }
 
+    private fun maybeEmitDebugSnapshot(snapshot: OcrDebugSnapshot?) {
+        val context = appContext ?: return
+        if (AppPreferences.isOcrDebugModeEnabled(context)) {
+            emitDebugSnapshot(snapshot)
+        } else {
+            emitDebugSnapshot(null)
+        }
+    }
+
+    private fun emitDebugSnapshot(snapshot: OcrDebugSnapshot?) {
+        debugListeners.forEach { it.onDebugSnapshot(snapshot) }
+    }
+
     interface StateListener {
         fun onStateChanged(state: ReaderState)
+    }
+
+    interface DebugListener {
+        fun onDebugSnapshot(snapshot: OcrDebugSnapshot?)
     }
 
     enum class ReaderState {
