@@ -51,6 +51,7 @@ class OcrEngine(context: Context) {
                     )
                 }
             }
+            .filterNot { entry -> shouldIgnoreLine(entry, imageWidth, imageHeight) }
 
         if (lineEntries.isEmpty()) {
             return OcrOutput(result.text.trim(), OcrDebugSnapshot(imageWidth, imageHeight, emptyList(), emptyList()))
@@ -194,6 +195,40 @@ class OcrEngine(context: Context) {
         return merged
     }
 
+    private fun shouldIgnoreLine(entry: LineEntry, imageWidth: Int, imageHeight: Int): Boolean {
+        val topCutoff = (imageHeight * 0.085).roundToInt()
+        val bottomCutoff = (imageHeight * 0.94).roundToInt()
+        val edgeInset = (imageWidth * 0.045).roundToInt().coerceAtLeast(18)
+        val tinyHeight = (imageHeight * 0.018).roundToInt().coerceAtLeast(18)
+        val tinyWidth = (imageWidth * 0.10).roundToInt().coerceAtLeast(72)
+
+        val isTopBarLike =
+            entry.bounds.top <= topCutoff &&
+                entry.height <= tinyHeight * 1.3 &&
+                entry.bounds.width() <= imageWidth * 0.28
+
+        val isBottomEdgeJunk =
+            entry.bounds.bottom >= bottomCutoff &&
+                entry.height <= tinyHeight * 1.2 &&
+                entry.bounds.width() <= imageWidth * 0.22
+
+        val isTinyEdgeText =
+            entry.height <= tinyHeight &&
+                entry.bounds.width() <= tinyWidth &&
+                (entry.bounds.left <= edgeInset || entry.bounds.right >= imageWidth - edgeInset)
+
+        val isStatusBarPattern =
+            entry.bounds.top <= topCutoff &&
+                STATUS_BAR_PATTERNS.any { pattern -> pattern.matches(entry.text) }
+
+        val isVeryShortEdgeGarbage =
+            entry.text.length <= 2 &&
+                entry.height <= tinyHeight &&
+                (entry.bounds.left <= edgeInset || entry.bounds.right >= imageWidth - edgeInset)
+
+        return isTopBarLike || isBottomEdgeJunk || isTinyEdgeText || isStatusBarPattern || isVeryShortEdgeGarbage
+    }
+
     private fun mergeParagraph(existing: String, next: String): String {
         val trimmedExisting = existing.trimEnd()
         val separator = when {
@@ -284,6 +319,15 @@ class OcrEngine(context: Context) {
             minOf(top, other.top),
             maxOf(right, other.right),
             maxOf(bottom, other.bottom)
+        )
+    }
+
+    companion object {
+        private val STATUS_BAR_PATTERNS = listOf(
+            Regex("""^\d{1,2}:\d{2}$"""),
+            Regex("""^\d{1,2}:\d{2}\s?[AP]M$""", RegexOption.IGNORE_CASE),
+            Regex("""^\d+%$"""),
+            Regex("""^(5G|4G|LTE|VoLTE|HD|NFC|VPN|Wi-?Fi)$""", RegexOption.IGNORE_CASE)
         )
     }
 }
