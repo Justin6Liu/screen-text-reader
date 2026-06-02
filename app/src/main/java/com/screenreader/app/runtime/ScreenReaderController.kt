@@ -28,6 +28,10 @@ object ScreenReaderController {
     private var lastStatus: String = "Ready. Grant permissions, start the overlay, then tap the floating button."
     @Volatile
     private var lastRecognizedText: String = "No recognized text yet."
+    @Volatile
+    private var currentPlayback: PlaybackSession? = null
+    @Volatile
+    private var pausedSegmentIndex: Int = 0
 
     private var speechManager: SpeechManager? = null
     private var ocrEngine: OcrEngine? = null
@@ -67,10 +71,31 @@ object ScreenReaderController {
             return
         }
         if (state == ReaderState.SPEAKING) {
-            stopSpeaking()
+            pauseSpeaking()
+            return
+        }
+        if (state == ReaderState.PAUSED) {
+            resumeSpeaking()
             return
         }
 
+        captureFreshAndReadAloud()
+    }
+
+    fun haltReading() {
+        if (state == ReaderState.PROCESSING) {
+            updateStatus("Already processing. Please wait.")
+            return
+        }
+        currentPlayback = null
+        pausedSegmentIndex = 0
+        speechManager?.stop()
+        emitDebugSnapshot(null)
+        updateState(ReaderState.IDLE)
+        updateStatus("Reading halted.")
+    }
+
+    private fun captureFreshAndReadAloud() {
         val service = ReaderAccessibilityService.current()
         if (service == null) {
             updateStatus("Accessibility service is not connected.")
@@ -115,8 +140,41 @@ object ScreenReaderController {
     }
 
     fun stopSpeaking() {
+        currentPlayback = null
+        pausedSegmentIndex = 0
         speechManager?.stop()
+        emitDebugSnapshot(null)
+        updateState(ReaderState.IDLE)
         updateStatus("Speech stopped.")
+    }
+
+    fun pauseSpeaking() {
+        val playback = currentPlayback
+        if (state != ReaderState.SPEAKING || playback == null) {
+            updateStatus("Nothing is currently reading.")
+            return
+        }
+        pausedSegmentIndex = playback.currentSegmentIndex
+        updateState(ReaderState.PAUSED)
+        speechManager?.pausePlayback()
+        updateStatus("Reading paused.")
+    }
+
+    fun resumeSpeaking() {
+        val playback = currentPlayback
+        if (playback == null) {
+            finishWithStatus("No paused reading to resume.")
+            return
+        }
+        val started = speakPlaybackFrom(playback, pausedSegmentIndex)
+        if (started) {
+            updateStatus("Reading resumed.")
+            playback.output.readSegments.getOrNull(pausedSegmentIndex)?.let { segment ->
+                emitReadingHighlight(playback.output, segment)
+            }
+        } else {
+            finishWithStatus("Could not resume speech.")
+        }
     }
 
     fun readDemoText() {
@@ -148,6 +206,8 @@ object ScreenReaderController {
 
     fun isSpeaking(): Boolean = state == ReaderState.SPEAKING
 
+    fun isPaused(): Boolean = state == ReaderState.PAUSED
+
     fun isProcessing(): Boolean = state == ReaderState.PROCESSING
 
     fun addStateListener(listener: StateListener) {
@@ -176,6 +236,8 @@ object ScreenReaderController {
     }
 
     private fun finishWithStatus(message: String) {
+        currentPlayback = null
+        pausedSegmentIndex = 0
         updateState(ReaderState.IDLE)
         updateStatus(message)
     }
@@ -196,29 +258,39 @@ object ScreenReaderController {
     private fun onSpeechFinished() {
         if (state == ReaderState.SPEAKING) {
             emitDebugSnapshot(null)
+            currentPlayback = null
+            pausedSegmentIndex = 0
             updateState(ReaderState.IDLE)
             updateStatus("Ready for the next read.")
         }
     }
 
     private fun speakOcrOutput(output: OcrOutput): Boolean {
-        val context = appContext ?: return speechManager?.speak(output.text) == true
-        if (!AppPreferences.isHighlightReadingLineEnabled(context) || output.readSegments.isEmpty()) {
+        if (output.readSegments.isEmpty()) {
             return speechManager?.speak(output.text) == true
         }
 
-        val segments = output.readSegments
-        val started = speechManager?.speakSegments(segments.map { it.text }) { index ->
-            segments.getOrNull(index)?.let { segment ->
-                emitReadingHighlight(output, segment)
-            }
-        } == true
+        val playback = PlaybackSession(output = output, segmentTexts = output.readSegments.map { it.text })
+        currentPlayback = playback
+        pausedSegmentIndex = 0
+        val started = speakPlaybackFrom(playback, 0)
         if (started) {
             output.readSegments.firstOrNull()?.let { segment ->
                 emitReadingHighlight(output, segment)
             }
         }
         return started
+    }
+
+    private fun speakPlaybackFrom(playback: PlaybackSession, startIndex: Int): Boolean {
+        val safeStartIndex = startIndex.coerceIn(0, playback.segmentTexts.lastIndex.coerceAtLeast(0))
+        return speechManager?.speakSegmentsFrom(playback.segmentTexts, safeStartIndex) { index ->
+            playback.currentSegmentIndex = index
+            pausedSegmentIndex = index
+            playback.output.readSegments.getOrNull(index)?.let { segment ->
+                emitReadingHighlight(playback.output, segment)
+            }
+        } == true
     }
 
     private fun emitReadingHighlight(output: OcrOutput, start: Int, end: Int) {
@@ -319,8 +391,15 @@ object ScreenReaderController {
     enum class ReaderState {
         IDLE,
         PROCESSING,
-        SPEAKING
+        SPEAKING,
+        PAUSED
     }
+
+    private data class PlaybackSession(
+        val output: OcrOutput,
+        val segmentTexts: List<String>,
+        @Volatile var currentSegmentIndex: Int = 0
+    )
 
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
 }

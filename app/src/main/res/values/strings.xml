@@ -19,9 +19,13 @@
     <string name="overlay_button_read_label">Read screen text</string>
     <string name="overlay_button_processing_label">Recognizing screen text</string>
     <string name="overlay_button_stop_label">Stop reading aloud</string>
+    <string name="overlay_button_pause_label">Pause reading aloud</string>
+    <string name="overlay_button_resume_label">Resume reading aloud</string>
     <string name="overlay_button_read_text">Read</string>
     <string name="overlay_button_processing_text">Working</string>
     <string name="overlay_button_stop_text">Stop</string>
+    <string name="overlay_button_pause_text">Pause</string>
+    <string name="overlay_button_resume_text">Resume</string>
     <string name="notification_title">Screen Reader is running</string>
     <string name="notification_text">Tap the floating button to read text. Use this notification to stop it if needed.</string>
     <string name="notification_channel_name">Screen Reader Overlay</string>

@@ -96,9 +96,7 @@ class OverlayService : Service(),
 
         val params = overlayParams ?: createOverlayLayoutParams()
 
-        button.setOnClickListener {
-            ScreenReaderController.captureAndReadAloud()
-        }
+        installButtonActionHandler(button, view, params)
         installDragHandler(view, params)
 
         try {
@@ -109,6 +107,7 @@ class OverlayService : Service(),
             overlayParams = params
             updateOverlayUi(
                 if (ScreenReaderController.isSpeaking()) ReaderState.SPEAKING
+                else if (ScreenReaderController.isPaused()) ReaderState.PAUSED
                 else if (ScreenReaderController.isProcessing()) ReaderState.PROCESSING
                 else ReaderState.IDLE
             )
@@ -157,6 +156,65 @@ class OverlayService : Service(),
                     }
                 }
                 return false
+            }
+        })
+    }
+
+    private fun installButtonActionHandler(button: ImageButton, view: View, params: WindowManager.LayoutParams) {
+        button.setOnTouchListener(object : View.OnTouchListener {
+            private var initialX = 0
+            private var initialY = 0
+            private var initialTouchX = 0f
+            private var initialTouchY = 0f
+            private var moved = false
+            private var longPressTriggered = false
+
+            private val redoRead = Runnable {
+                longPressTriggered = true
+                ScreenReaderController.haltReading()
+                Toast.makeText(this@OverlayService, "Reading halted.", Toast.LENGTH_SHORT).show()
+            }
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        moved = false
+                        longPressTriggered = false
+                        mainHandler.postDelayed(redoRead, REDO_OCR_LONG_PRESS_MS)
+                        return true
+                    }
+
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - initialTouchX).toInt()
+                        val dy = (event.rawY - initialTouchY).toInt()
+                        if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) {
+                            moved = true
+                            mainHandler.removeCallbacks(redoRead)
+                            params.x = initialX + dx
+                            params.y = initialY + dy
+                            windowManager.updateViewLayout(view, params)
+                        }
+                        return true
+                    }
+
+                    MotionEvent.ACTION_UP -> {
+                        mainHandler.removeCallbacks(redoRead)
+                        if (!moved && !longPressTriggered) {
+                            ScreenReaderController.captureAndReadAloud()
+                        }
+                        return true
+                    }
+
+                    MotionEvent.ACTION_CANCEL -> {
+                        mainHandler.removeCallbacks(redoRead)
+                        return true
+                    }
+                }
+                return true
             }
         })
     }
@@ -349,8 +407,15 @@ class OverlayService : Service(),
 
             ReaderState.SPEAKING -> {
                 overlayButton?.setImageResource(R.drawable.ic_overlay_pause)
-                overlayButton?.contentDescription = getString(R.string.overlay_button_stop_label)
-                overlayLabel?.text = getString(R.string.overlay_button_stop_text)
+                overlayButton?.contentDescription = getString(R.string.overlay_button_pause_label)
+                overlayLabel?.text = getString(R.string.overlay_button_pause_text)
+                overlayButton?.alpha = 1.0f
+            }
+
+            ReaderState.PAUSED -> {
+                overlayButton?.setImageResource(R.drawable.ic_overlay_play)
+                overlayButton?.contentDescription = getString(R.string.overlay_button_resume_label)
+                overlayLabel?.text = getString(R.string.overlay_button_resume_text)
                 overlayButton?.alpha = 1.0f
             }
         }
@@ -362,6 +427,7 @@ class OverlayService : Service(),
 
         private const val CHANNEL_ID = "screen_reader_overlay"
         private const val NOTIFICATION_ID = 1001
+        private const val REDO_OCR_LONG_PRESS_MS = 1000L
 
         @Volatile
         var isRunning: Boolean = false

@@ -175,10 +175,61 @@ class SpeechManager(
         return accepted
     }
 
+    fun speakSegmentsFrom(
+        segments: List<String>,
+        startIndex: Int,
+        onSegmentStart: (Int) -> Unit
+    ): Boolean {
+        if (!ready) {
+            onStatusChanged(
+                if (!initAttempted) {
+                    "Speech engine is still initializing. Wait a moment and try again."
+                } else if (!initialized) {
+                    "Speech engine initialization failed. Engine: $engineLabel"
+                } else {
+                    "Speech is not ready. Engine: $engineLabel. Check Xiaomi TTS settings and Chinese voice."
+                }
+            )
+            return false
+        }
+
+        val indexedSegments = segments
+            .mapIndexed { index, text -> index to text.trim() }
+            .filter { (index, text) -> index >= startIndex && text.isNotEmpty() }
+        if (indexedSegments.isEmpty()) return false
+
+        textToSpeech.stop()
+        currentRangeListener = null
+        currentSegmentStartListener = onSegmentStart
+
+        val sequence = sequenceCounter.incrementAndGet()
+        finalUtteranceId = segmentUtteranceId(sequence, indexedSegments.last().first)
+
+        var accepted = true
+        indexedSegments.forEachIndexed { queueIndex, (originalIndex, segment) ->
+            val queueMode = if (queueIndex == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            val result = textToSpeech.speak(segment, queueMode, null, segmentUtteranceId(sequence, originalIndex))
+            if (result == TextToSpeech.ERROR) {
+                accepted = false
+            }
+        }
+
+        if (!accepted) {
+            clearSpeechCallbacks()
+            onStatusChanged("Speech engine rejected segmented playback. Engine: $engineLabel")
+        }
+        return accepted
+    }
+
     fun stop() {
         clearSpeechCallbacks()
         textToSpeech.stop()
         onSpeechFinished()
+    }
+
+    fun pausePlayback() {
+        clearSpeechCallbacks()
+        textToSpeech.stop()
     }
 
     private fun clearSpeechCallbacks() {
