@@ -29,13 +29,18 @@ import com.screenreader.app.ocr.OcrDebugSnapshot
 import com.screenreader.app.runtime.ScreenReaderController
 import com.screenreader.app.runtime.ScreenReaderController.ReaderState
 
-class OverlayService : Service(), ScreenReaderController.StateListener, ScreenReaderController.DebugListener {
+class OverlayService : Service(),
+    ScreenReaderController.StateListener,
+    ScreenReaderController.DebugListener,
+    ScreenReaderController.CaptureOverlayListener {
 
     private lateinit var windowManager: WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private var overlayView: View? = null
     private var overlayButton: ImageButton? = null
     private var overlayLabel: TextView? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
+    private var overlayHiddenForCapture = false
     private var debugOverlayView: OcrDebugOverlayView? = null
 
     private val clearDebugOverlay = Runnable {
@@ -48,6 +53,7 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
         ScreenReaderController.initialize(applicationContext)
         ScreenReaderController.addStateListener(this)
         ScreenReaderController.addDebugListener(this)
+        ScreenReaderController.addCaptureOverlayListener(this)
         createNotificationChannel()
         startAsForegroundService()
         if (!Settings.canDrawOverlays(this)) {
@@ -70,6 +76,7 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
     override fun onDestroy() {
         ScreenReaderController.removeStateListener(this)
         ScreenReaderController.removeDebugListener(this)
+        ScreenReaderController.removeCaptureOverlayListener(this)
         hideOverlay()
         hideDebugOverlay()
         isRunning = false
@@ -87,18 +94,7 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
         val button = view.findViewById<ImageButton>(R.id.overlayButton)
         val label = view.findViewById<TextView>(R.id.overlayLabel)
 
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 40
-            y = 240
-        }
+        val params = overlayParams ?: createOverlayLayoutParams()
 
         button.setOnClickListener {
             ScreenReaderController.captureAndReadAloud()
@@ -110,6 +106,7 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
             overlayView = view
             overlayButton = button
             overlayLabel = label
+            overlayParams = params
             updateOverlayUi(
                 if (ScreenReaderController.isSpeaking()) ReaderState.SPEAKING
                 else if (ScreenReaderController.isProcessing()) ReaderState.PROCESSING
@@ -164,6 +161,21 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
         })
     }
 
+    private fun createOverlayLayoutParams(): WindowManager.LayoutParams {
+        return WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 40
+            y = 240
+        }
+    }
+
     private fun hideOverlay() {
         overlayView?.let { view ->
             windowManager.removeView(view)
@@ -171,6 +183,18 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
         overlayView = null
         overlayButton = null
         overlayLabel = null
+    }
+
+    private fun hideOverlayForCapture() {
+        if (overlayView == null) return
+        overlayHiddenForCapture = true
+        hideOverlay()
+    }
+
+    private fun restoreOverlayAfterCapture() {
+        if (!overlayHiddenForCapture) return
+        overlayHiddenForCapture = false
+        showOverlay()
     }
 
     private fun showDebugOverlay(snapshot: OcrDebugSnapshot) {
@@ -272,6 +296,18 @@ class OverlayService : Service(), ScreenReaderController.StateListener, ScreenRe
             } else {
                 showDebugOverlay(snapshot)
             }
+        }
+    }
+
+    override fun onBeforeScreenCapture() {
+        mainHandler.post {
+            hideOverlayForCapture()
+        }
+    }
+
+    override fun onAfterScreenCapture() {
+        mainHandler.post {
+            restoreOverlayAfterCapture()
         }
     }
 

@@ -13,6 +13,7 @@ object ScreenReaderController {
     private val worker = Executors.newSingleThreadExecutor()
     private val listeners = CopyOnWriteArraySet<StateListener>()
     private val debugListeners = CopyOnWriteArraySet<DebugListener>()
+    private val captureOverlayListeners = CopyOnWriteArraySet<CaptureOverlayListener>()
 
     @Volatile
     private var appContext: Context? = null
@@ -76,32 +77,35 @@ object ScreenReaderController {
         updateState(ReaderState.PROCESSING)
         emitDebugSnapshot(null)
         updateStatus("Capturing screen...")
-        service.captureScreen { captureResult ->
-            captureResult.onSuccess { bitmap ->
-                worker.execute {
-                    maybeSaveDebugScreenshot(bitmap)
-                    updateStatus("Recognizing text...")
-                    val result = ocrEngine?.recognize(bitmap)
-                    bitmap.recycle()
-                    result
-                        ?.onSuccess { output ->
-                            maybeEmitDebugSnapshot(output.debugSnapshot)
-                            if (output.text.isBlank()) {
-                                finishWithStatus("No text found on screen.")
-                            } else {
-                                updateStatus("Reading aloud...")
-                                val started = speechManager?.speak(output.text) == true
-                                if (!started) {
-                                    finishWithStatus("Speech is not ready yet.")
+        prepareOverlaysForCapture {
+            service.captureScreen { captureResult ->
+                restoreOverlaysAfterCapture()
+                captureResult.onSuccess { bitmap ->
+                    worker.execute {
+                        maybeSaveDebugScreenshot(bitmap)
+                        updateStatus("Recognizing text...")
+                        val result = ocrEngine?.recognize(bitmap)
+                        bitmap.recycle()
+                        result
+                            ?.onSuccess { output ->
+                                maybeEmitDebugSnapshot(output.debugSnapshot)
+                                if (output.text.isBlank()) {
+                                    finishWithStatus("No text found on screen.")
+                                } else {
+                                    updateStatus("Reading aloud...")
+                                    val started = speechManager?.speak(output.text) == true
+                                    if (!started) {
+                                        finishWithStatus("Speech is not ready yet.")
+                                    }
                                 }
                             }
-                        }
-                        ?.onFailure { error ->
-                            finishWithStatus(error.message ?: "OCR failed.")
-                        } ?: finishWithStatus("OCR engine unavailable.")
+                            ?.onFailure { error ->
+                                finishWithStatus(error.message ?: "OCR failed.")
+                            } ?: finishWithStatus("OCR engine unavailable.")
+                    }
+                }.onFailure { error ->
+                    finishWithStatus(error.message ?: "Screen capture failed.")
                 }
-            }.onFailure { error ->
-                finishWithStatus(error.message ?: "Screen capture failed.")
             }
         }
     }
@@ -151,6 +155,14 @@ object ScreenReaderController {
         debugListeners.remove(listener)
     }
 
+    fun addCaptureOverlayListener(listener: CaptureOverlayListener) {
+        captureOverlayListeners.add(listener)
+    }
+
+    fun removeCaptureOverlayListener(listener: CaptureOverlayListener) {
+        captureOverlayListeners.remove(listener)
+    }
+
     private fun finishWithStatus(message: String) {
         updateState(ReaderState.IDLE)
         updateStatus(message)
@@ -197,6 +209,16 @@ object ScreenReaderController {
         debugListeners.forEach { it.onDebugSnapshot(snapshot) }
     }
 
+    private fun prepareOverlaysForCapture(onReady: () -> Unit) {
+        captureOverlayListeners.forEach { it.onBeforeScreenCapture() }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.postDelayed(onReady, OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS)
+    }
+
+    private fun restoreOverlaysAfterCapture() {
+        captureOverlayListeners.forEach { it.onAfterScreenCapture() }
+    }
+
     interface StateListener {
         fun onStateChanged(state: ReaderState)
     }
@@ -205,9 +227,16 @@ object ScreenReaderController {
         fun onDebugSnapshot(snapshot: OcrDebugSnapshot?)
     }
 
+    interface CaptureOverlayListener {
+        fun onBeforeScreenCapture()
+        fun onAfterScreenCapture()
+    }
+
     enum class ReaderState {
         IDLE,
         PROCESSING,
         SPEAKING
     }
+
+    private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
 }
