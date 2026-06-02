@@ -79,6 +79,7 @@ object ScreenReaderController {
         service.captureScreen { captureResult ->
             captureResult.onSuccess { bitmap ->
                 worker.execute {
+                    maybeSaveDebugScreenshot(bitmap)
                     updateStatus("Recognizing text...")
                     val result = ocrEngine?.recognize(bitmap)
                     bitmap.recycle()
@@ -178,6 +179,18 @@ object ScreenReaderController {
         } else {
             emitDebugSnapshot(null)
         }
+    }
+
+    private fun maybeSaveDebugScreenshot(bitmap: android.graphics.Bitmap) {
+        val context = appContext ?: return
+        if (!AppPreferences.isSaveDebugScreenshotsEnabled(context)) return
+        DebugImageStore.saveCapturedScreenshot(context, bitmap)
+            .onSuccess { file ->
+                updateStatus("Saved debug screenshot: ${file.absolutePath}")
+            }
+            .onFailure { error ->
+                updateStatus(error.message ?: "Failed to save debug screenshot.")
+            }
     }
 
     private fun emitDebugSnapshot(snapshot: OcrDebugSnapshot?) {

@@ -4,6 +4,7 @@
     <string name="accessibility_service_label">Screen Reader Accessibility</string>
     <string name="setup_subtitle">Large controls only. Start the overlay, open a WeChat image, then tap the floating button to read text aloud.</string>
     <string name="debug_mode_label">Debug OCR boxes after capture</string>
+    <string name="save_debug_screenshots_label">Save debug screenshots locally</string>
     <string name="status_title">Device Status</string>
     <string name="grant_overlay_permission">Grant Overlay Permission</string>
     <string name="open_accessibility_settings">Open Accessibility Settings</string>

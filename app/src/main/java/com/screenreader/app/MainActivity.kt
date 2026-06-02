@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stopSpeechButton: Button
     private lateinit var testReadButton: Button
     private lateinit var debugModeCheckBox: CheckBox
+    private lateinit var saveDebugScreenshotsCheckBox: CheckBox
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -53,11 +54,18 @@ class MainActivity : AppCompatActivity() {
         stopSpeechButton = findViewById(R.id.stopSpeechButton)
         testReadButton = findViewById(R.id.testReadButton)
         debugModeCheckBox = findViewById(R.id.debugModeCheckBox)
+        saveDebugScreenshotsCheckBox = findViewById(R.id.saveDebugScreenshotsCheckBox)
 
         debugModeCheckBox.isChecked = AppPreferences.isOcrDebugModeEnabled(this)
         debugModeCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
             AppPreferences.setOcrDebugModeEnabled(this, isChecked)
             ScreenReaderController.setOcrDebugModeEnabled(isChecked)
+            refreshStatus()
+        }
+
+        saveDebugScreenshotsCheckBox.isChecked = AppPreferences.isSaveDebugScreenshotsEnabled(this)
+        saveDebugScreenshotsCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            AppPreferences.setSaveDebugScreenshotsEnabled(this, isChecked)
             refreshStatus()
         }
 
@@ -118,7 +126,8 @@ class MainActivity : AppCompatActivity() {
             appendLine("Accessibility service: ${if (accessibilityReady) "Connected" else "Not connected"}")
             appendLine("Overlay service: ${if (overlayRunning) "Running" else "Stopped"}")
             appendLine("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
-            append("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
+            appendLine("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
+            append("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
         }
 
         speechStatusText.text = ScreenReaderController.getUiStatus()
