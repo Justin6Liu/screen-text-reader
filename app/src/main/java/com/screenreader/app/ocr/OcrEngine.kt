@@ -1,8 +1,9 @@
 package com.screenreader.app.ocr
 
 import android.content.Context
-import android.graphics.Rect
 import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Rect
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -19,14 +20,29 @@ class OcrEngine(context: Context) {
     fun recognize(bitmap: Bitmap): Result<OcrOutput> {
         return runCatching {
             val scaledBitmap = downscale(bitmap)
-            val image = InputImage.fromBitmap(scaledBitmap.bitmap, 0)
-            val result = Tasks.await(recognizer.process(image))
-            buildReadableResult(result, scaledBitmap.bitmap.width, scaledBitmap.bitmap.height)
+            val originalResult = processVariant(
+                ImageVariant(bitmap = scaledBitmap.bitmap, offsetY = 0),
+                scaledBitmap.bitmap.width,
+                scaledBitmap.bitmap.height
+            )
+            val enhancedResult = processVariant(
+                ImageVariant(
+                    bitmap = enhanceForOcr(scaledBitmap.bitmap),
+                    offsetY = 0
+                ),
+                scaledBitmap.bitmap.width,
+                scaledBitmap.bitmap.height
+            )
+            chooseBetterResult(originalResult, enhancedResult).output
         }
     }
 
     private fun downscale(bitmap: Bitmap): ScaledBitmap {
-        val maxDimension = 1600
+        val maxDimension = when {
+            minOf(bitmap.width, bitmap.height) >= 1440 -> 2400
+            minOf(bitmap.width, bitmap.height) >= 1080 -> 2200
+            else -> 1800
+        }
         val width = bitmap.width
         val height = bitmap.height
         val longestSide = maxOf(width, height)
@@ -38,7 +54,22 @@ class OcrEngine(context: Context) {
         return ScaledBitmap(Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true))
     }
 
-    private fun buildReadableResult(result: Text, imageWidth: Int, imageHeight: Int): OcrOutput {
+    private fun processVariant(
+        imageVariant: ImageVariant,
+        fullImageWidth: Int,
+        fullImageHeight: Int
+    ): ProcessedOcrResult {
+        val image = InputImage.fromBitmap(imageVariant.bitmap, 0)
+        val result = Tasks.await(recognizer.process(image))
+        return buildReadableResult(result, fullImageWidth, fullImageHeight, imageVariant.offsetY)
+    }
+
+    private fun buildReadableResult(
+        result: Text,
+        imageWidth: Int,
+        imageHeight: Int,
+        offsetY: Int
+    ): ProcessedOcrResult {
         val lineEntries = result.textBlocks
             .flatMap { block ->
                 block.lines.mapNotNull { line ->
@@ -47,14 +78,20 @@ class OcrEngine(context: Context) {
                     if (text.isBlank()) return@mapNotNull null
                     LineEntry(
                         text = text,
-                        bounds = bounds
+                        bounds = bounds.offsetBy(0, offsetY)
                     )
                 }
             }
             .filterNot { entry -> shouldIgnoreLine(entry, imageWidth, imageHeight) }
 
         if (lineEntries.isEmpty()) {
-            return OcrOutput(result.text.trim(), OcrDebugSnapshot(imageWidth, imageHeight, emptyList(), emptyList()))
+            return ProcessedOcrResult(
+                output = OcrOutput(
+                    result.text.trim(),
+                    OcrDebugSnapshot(imageWidth, imageHeight, emptyList(), emptyList())
+                ),
+                score = result.text.countMeaningfulChars()
+            )
         }
 
         val baselineHeight = lineEntries.map { it.bounds.height() }.medianOrAverage().coerceAtLeast(1.0)
@@ -120,15 +157,45 @@ class OcrEngine(context: Context) {
 
         val paragraphs = mergeRegionsIntoParagraphs(regions, baselineHeight)
 
-        return OcrOutput(
-            text = paragraphs.joinToString(separator = "\n\n") { it.text }.trim(),
-            debugSnapshot = OcrDebugSnapshot(
-                imageWidth = imageWidth,
-                imageHeight = imageHeight,
-                lineBounds = lineEntries.map { Rect(it.bounds) },
-                paragraphBounds = paragraphs.map { Rect(it.bounds) }
-            )
+        val finalText = paragraphs.joinToString(separator = "\n\n") { it.text }.trim()
+        return ProcessedOcrResult(
+            output = OcrOutput(
+                text = finalText,
+                debugSnapshot = OcrDebugSnapshot(
+                    imageWidth = imageWidth,
+                    imageHeight = imageHeight,
+                    lineBounds = lineEntries.map { Rect(it.bounds) },
+                    paragraphBounds = paragraphs.map { Rect(it.bounds) }
+                )
+            ),
+            score = finalText.countMeaningfulChars() + lineEntries.size * 4 + paragraphs.size * 8
         )
+    }
+
+    private fun enhanceForOcr(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val sourcePixels = IntArray(width * height)
+        val outputPixels = IntArray(width * height)
+        bitmap.getPixels(sourcePixels, 0, width, 0, 0, width, height)
+
+        for (index in sourcePixels.indices) {
+            val pixel = sourcePixels[index]
+            val alpha = Color.alpha(pixel)
+            val grayscale = Color.red(pixel) * 0.299 + Color.green(pixel) * 0.587 + Color.blue(pixel) * 0.114
+            val contrasted = ((grayscale - 128.0) * 1.22 + 134.0).coerceIn(0.0, 255.0)
+            val leveled = if (contrasted >= 180.0) contrasted + 10.0 else contrasted - 6.0
+            val level = leveled.coerceIn(0.0, 255.0).roundToInt()
+            outputPixels[index] = Color.argb(alpha, level, level, level)
+        }
+
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(outputPixels, 0, width, 0, 0, width, height)
+        }
+    }
+
+    private fun chooseBetterResult(first: ProcessedOcrResult, second: ProcessedOcrResult): ProcessedOcrResult {
+        return if (second.score > first.score) second else first
     }
 
     private fun buildRowText(row: List<LineEntry>, columnGap: Int): String {
@@ -250,6 +317,10 @@ class OcrEngine(context: Context) {
         return replace("\\s+".toRegex(), " ").trim()
     }
 
+    private fun String.countMeaningfulChars(): Int {
+        return count { !it.isWhitespace() && it != '，' && it != '。' }
+    }
+
     private fun String.endsWithChinesePunctuation(): Boolean {
         return endsWith('。') || endsWith('！') || endsWith('？') || endsWith('：') || endsWith('；')
     }
@@ -313,6 +384,16 @@ class OcrEngine(context: Context) {
         val bitmap: Bitmap
     )
 
+    private data class ImageVariant(
+        val bitmap: Bitmap,
+        val offsetY: Int
+    )
+
+    private data class ProcessedOcrResult(
+        val output: OcrOutput,
+        val score: Int
+    )
+
     private fun Rect.unionWith(other: Rect): Rect {
         return Rect(
             minOf(left, other.left),
@@ -320,6 +401,10 @@ class OcrEngine(context: Context) {
             maxOf(right, other.right),
             maxOf(bottom, other.bottom)
         )
+    }
+
+    private fun Rect.offsetBy(dx: Int, dy: Int): Rect {
+        return Rect(left + dx, top + dy, right + dx, bottom + dy)
     }
 
     companion object {
