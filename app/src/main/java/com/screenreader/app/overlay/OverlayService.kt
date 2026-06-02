@@ -231,7 +231,9 @@ class OverlayService : Service(),
         }
         debugOverlayView?.updateSnapshot(snapshot)
         mainHandler.removeCallbacks(clearDebugOverlay)
-        mainHandler.postDelayed(clearDebugOverlay, 8000L)
+        if (snapshot.activeReadBounds == null) {
+            mainHandler.postDelayed(clearDebugOverlay, 8000L)
+        }
     }
 
     private fun hideDebugOverlay() {

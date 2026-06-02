@@ -5,6 +5,7 @@ import com.screenreader.app.ocr.OcrDebugSnapshot
 import com.screenreader.app.accessibility.ReaderAccessibilityService
 import com.screenreader.app.ocr.OcrOutput
 import com.screenreader.app.ocr.OcrEngine
+import com.screenreader.app.ocr.OcrReadSegment
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 
@@ -96,7 +97,7 @@ object ScreenReaderController {
                                     finishWithStatus("No text found on screen.")
                                 } else {
                                     updateStatus("Reading aloud...")
-                                    val started = speechManager?.speak(output.text) == true
+                                    val started = speakOcrOutput(output)
                                     if (!started) {
                                         finishWithStatus("Speech is not ready yet.")
                                     }
@@ -134,6 +135,12 @@ object ScreenReaderController {
     }
 
     fun setOcrDebugModeEnabled(enabled: Boolean) {
+        if (!enabled) {
+            emitDebugSnapshot(null)
+        }
+    }
+
+    fun setHighlightReadingLineEnabled(enabled: Boolean) {
         if (!enabled) {
             emitDebugSnapshot(null)
         }
@@ -188,9 +195,69 @@ object ScreenReaderController {
 
     private fun onSpeechFinished() {
         if (state == ReaderState.SPEAKING) {
+            emitDebugSnapshot(null)
             updateState(ReaderState.IDLE)
             updateStatus("Ready for the next read.")
         }
+    }
+
+    private fun speakOcrOutput(output: OcrOutput): Boolean {
+        val context = appContext ?: return speechManager?.speak(output.text) == true
+        if (!AppPreferences.isHighlightReadingLineEnabled(context) || output.readSegments.isEmpty()) {
+            return speechManager?.speak(output.text) == true
+        }
+
+        val segments = output.readSegments
+        val started = speechManager?.speakSegments(segments.map { it.text }) { index ->
+            segments.getOrNull(index)?.let { segment ->
+                emitReadingHighlight(output, segment)
+            }
+        } == true
+        if (started) {
+            output.readSegments.firstOrNull()?.let { segment ->
+                emitReadingHighlight(output, segment)
+            }
+        }
+        return started
+    }
+
+    private fun emitReadingHighlight(output: OcrOutput, start: Int, end: Int) {
+        val context = appContext ?: return
+        if (!AppPreferences.isHighlightReadingLineEnabled(context)) return
+
+        val baseSnapshot = output.debugSnapshot ?: return
+        val activeSegment = output.readSegments.findBestSegment(start, end) ?: return
+        val includeDebugBoxes = AppPreferences.isOcrDebugModeEnabled(context)
+        emitDebugSnapshot(
+            OcrDebugSnapshot(
+                imageWidth = baseSnapshot.imageWidth,
+                imageHeight = baseSnapshot.imageHeight,
+                lineBounds = if (includeDebugBoxes) baseSnapshot.lineBounds else emptyList(),
+                paragraphBounds = if (includeDebugBoxes) baseSnapshot.paragraphBounds else emptyList(),
+                sourceLabel = "reading highlight",
+                referenceParagraphBounds = if (includeDebugBoxes) baseSnapshot.referenceParagraphBounds else emptyList(),
+                activeReadBounds = activeSegment.bounds
+            )
+        )
+    }
+
+    private fun emitReadingHighlight(output: OcrOutput, activeSegment: OcrReadSegment) {
+        val context = appContext ?: return
+        if (!AppPreferences.isHighlightReadingLineEnabled(context)) return
+
+        val baseSnapshot = output.debugSnapshot ?: return
+        val includeDebugBoxes = AppPreferences.isOcrDebugModeEnabled(context)
+        emitDebugSnapshot(
+            OcrDebugSnapshot(
+                imageWidth = baseSnapshot.imageWidth,
+                imageHeight = baseSnapshot.imageHeight,
+                lineBounds = if (includeDebugBoxes) baseSnapshot.lineBounds else emptyList(),
+                paragraphBounds = if (includeDebugBoxes) baseSnapshot.paragraphBounds else emptyList(),
+                sourceLabel = "reading highlight",
+                referenceParagraphBounds = if (includeDebugBoxes) baseSnapshot.referenceParagraphBounds else emptyList(),
+                activeReadBounds = activeSegment.bounds
+            )
+        )
     }
 
     private fun maybeEmitDebugSnapshot(snapshot: OcrDebugSnapshot?) {
@@ -226,6 +293,14 @@ object ScreenReaderController {
 
     private fun restoreOverlaysAfterCapture() {
         captureOverlayListeners.forEach { it.onAfterScreenCapture() }
+    }
+
+    private fun List<OcrReadSegment>.findBestSegment(start: Int, end: Int): OcrReadSegment? {
+        return firstOrNull { segment ->
+            start < segment.endIndex && end > segment.startIndex
+        } ?: minByOrNull { segment ->
+            kotlin.math.abs(segment.startIndex - start)
+        }
     }
 
     interface StateListener {

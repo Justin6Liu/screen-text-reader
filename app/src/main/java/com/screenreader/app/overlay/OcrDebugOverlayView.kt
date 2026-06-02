@@ -36,6 +36,17 @@ class OcrDebugOverlayView(context: Context) : View(context) {
         pathEffect = DashPathEffect(floatArrayOf(18f, 12f), 0f)
     }
 
+    private val activeReadFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(75, 255, 235, 59)
+        style = Paint.Style.FILL
+    }
+
+    private val activeReadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(255, 255, 235, 59)
+        style = Paint.Style.STROKE
+        strokeWidth = 10f
+    }
+
     private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(170, 18, 28, 33)
         style = Paint.Style.FILL
@@ -73,12 +84,17 @@ class OcrDebugOverlayView(context: Context) : View(context) {
         data.referenceParagraphBounds.forEach { rect ->
             canvas.drawRect(rect.toScaledRectF(scaleX, scaleY, rectBuffer), referenceParagraphPaint)
         }
+        data.activeReadBounds?.let { rect ->
+            val scaledRect = rect.toScaledRectF(scaleX, scaleY, rectBuffer)
+            canvas.drawRect(scaledRect, activeReadFillPaint)
+            canvas.drawRect(scaledRect, activeReadPaint)
+        }
 
         drawLegend(canvas, data)
     }
 
     private fun drawLegend(canvas: Canvas, data: OcrDebugSnapshot) {
-        val text = "Debug OCR  ${data.sourceLabel}  image=${data.imageWidth}x${data.imageHeight} view=${width}x${height}"
+        val text = "OCR overlay  ${data.sourceLabel}  image=${data.imageWidth}x${data.imageHeight} view=${width}x${height}"
         val paddingHorizontal = 24f
         val paddingVertical = 16f
         val textWidth = labelTextPaint.measureText(text)

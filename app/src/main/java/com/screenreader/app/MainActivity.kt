@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var debugModeCheckBox: CheckBox
     private lateinit var saveDebugScreenshotsCheckBox: CheckBox
     private lateinit var recognizedTextConsoleCheckBox: CheckBox
+    private lateinit var highlightReadingLineCheckBox: CheckBox
     private lateinit var recognizedTextConsoleTitle: TextView
     private lateinit var recognizedTextConsoleText: TextView
 
@@ -59,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         debugModeCheckBox = findViewById(R.id.debugModeCheckBox)
         saveDebugScreenshotsCheckBox = findViewById(R.id.saveDebugScreenshotsCheckBox)
         recognizedTextConsoleCheckBox = findViewById(R.id.recognizedTextConsoleCheckBox)
+        highlightReadingLineCheckBox = findViewById(R.id.highlightReadingLineCheckBox)
         recognizedTextConsoleTitle = findViewById(R.id.recognizedTextConsoleTitle)
         recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
 
@@ -78,6 +80,13 @@ class MainActivity : AppCompatActivity() {
         recognizedTextConsoleCheckBox.isChecked = AppPreferences.isRecognizedTextConsoleEnabled(this)
         recognizedTextConsoleCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
             AppPreferences.setRecognizedTextConsoleEnabled(this, isChecked)
+            refreshStatus()
+        }
+
+        highlightReadingLineCheckBox.isChecked = AppPreferences.isHighlightReadingLineEnabled(this)
+        highlightReadingLineCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            AppPreferences.setHighlightReadingLineEnabled(this, isChecked)
+            ScreenReaderController.setHighlightReadingLineEnabled(isChecked)
             refreshStatus()
         }
 
@@ -140,7 +149,8 @@ class MainActivity : AppCompatActivity() {
             appendLine("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
             appendLine("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
             appendLine("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
-            append("Text console: ${if (AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity)) "On" else "Off"}")
+            appendLine("Text console: ${if (AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity)) "On" else "Off"}")
+            append("Reading line highlight: ${if (AppPreferences.isHighlightReadingLineEnabled(this@MainActivity)) "On" else "Off"}")
         }
 
         speechStatusText.text = ScreenReaderController.getUiStatus()

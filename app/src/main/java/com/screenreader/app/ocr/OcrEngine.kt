@@ -142,13 +142,19 @@ class OcrEngine(context: Context) {
                     (previousRowRight != null && rowLeft + columnGap < previousRowRight)
 
             if (startsNewParagraph) {
-                regions += ParagraphEntry(rowText, rowBounds, rowHeight)
+                regions += ParagraphEntry(
+                    text = rowText,
+                    bounds = rowBounds,
+                    averageHeight = rowHeight,
+                    rows = listOf(ReadRow(rowText, rowBounds))
+                )
             } else {
                 val previousRegion = regions.removeLast()
                 regions += ParagraphEntry(
                     text = mergeParagraph(previousRegion.text, rowText),
                     bounds = previousRegion.bounds.unionWith(rowBounds),
-                    averageHeight = mergeAverageHeight(previousRegion.averageHeight, rowHeight)
+                    averageHeight = mergeAverageHeight(previousRegion.averageHeight, rowHeight),
+                    rows = previousRegion.rows + ReadRow(rowText, rowBounds)
                 )
             }
 
@@ -159,19 +165,20 @@ class OcrEngine(context: Context) {
 
         val paragraphs = mergeRegionsIntoParagraphs(regions, baselineHeight)
 
-        val finalText = paragraphs.joinToString(separator = "\n\n") { it.text }.trim()
+        val readableText = buildReadableTextWithSegments(paragraphs)
         return ProcessedOcrResult(
             output = OcrOutput(
-                text = finalText,
+                text = readableText.text,
                 debugSnapshot = OcrDebugSnapshot(
                     imageWidth = imageWidth,
                     imageHeight = imageHeight,
                     lineBounds = lineEntries.map { Rect(it.bounds) },
                     paragraphBounds = paragraphs.map { Rect(it.bounds) },
                     sourceLabel = imageVariant.label
-                )
+                ),
+                readSegments = readableText.segments
             ),
-            score = finalText.scoreReadableText(lineEntries.size, paragraphs.size),
+            score = readableText.text.scoreReadableText(lineEntries.size, paragraphs.size),
             paragraphBounds = paragraphs.map { Rect(it.bounds) }
         )
     }
@@ -223,18 +230,18 @@ class OcrEngine(context: Context) {
 
         if (regionResults.isEmpty()) return globalResult
 
-        val combinedText = regionResults.joinToString(separator = "\n\n") { it.result.output.text }.trim()
+        val combinedReadableText = combineRegionReadableText(regionResults)
         val combinedLineBounds = regionResults.flatMap { it.result.output.debugSnapshot?.lineBounds ?: emptyList() }
         val combinedParagraphBounds = regionResults.flatMap { it.result.paragraphBounds }
         val cropBounds = regionResults.map { Rect(it.cropBounds) }
-        val combinedScore = combinedText.scoreReadableText(
+        val combinedScore = combinedReadableText.text.scoreReadableText(
             lineCount = combinedLineBounds.size,
             paragraphCount = combinedParagraphBounds.size
         ) + REGION_RERUN_SCORE_BONUS
 
         return ProcessedOcrResult(
             output = OcrOutput(
-                text = combinedText,
+                text = combinedReadableText.text,
                 debugSnapshot = OcrDebugSnapshot(
                     imageWidth = fullImageWidth,
                     imageHeight = fullImageHeight,
@@ -242,11 +249,38 @@ class OcrEngine(context: Context) {
                     paragraphBounds = combinedParagraphBounds,
                     sourceLabel = "paragraph region rerun",
                     referenceParagraphBounds = cropBounds
-                )
+                ),
+                readSegments = combinedReadableText.segments
             ),
             score = combinedScore,
             paragraphBounds = combinedParagraphBounds
         )
+    }
+
+    private fun combineRegionReadableText(regionResults: List<RegionOcrResult>): ReadableText {
+        val builder = StringBuilder()
+        val segments = mutableListOf<OcrReadSegment>()
+
+        regionResults.forEachIndexed { index, regionResult ->
+            val output = regionResult.result.output
+            if (output.text.isBlank()) return@forEachIndexed
+            if (index > 0 && builder.isNotEmpty()) {
+                builder.append("\n\n")
+            }
+
+            val offset = builder.length
+            builder.append(output.text)
+            output.readSegments.forEach { segment ->
+                segments += OcrReadSegment(
+                    text = segment.text,
+                    bounds = Rect(segment.bounds),
+                    startIndex = offset + segment.startIndex,
+                    endIndex = offset + segment.endIndex
+                )
+            }
+        }
+
+        return ReadableText(builder.toString().trim(), segments)
     }
 
     private fun createUpscaledVariant(bitmap: Bitmap, factor: Float, label: String): ImageVariant? {
@@ -367,13 +401,45 @@ class OcrEngine(context: Context) {
                 merged[merged.lastIndex] = ParagraphEntry(
                     text = mergeParagraph(previous.text, region.text),
                     bounds = previous.bounds.unionWith(region.bounds),
-                    averageHeight = mergeAverageHeight(previous.averageHeight, region.averageHeight)
+                    averageHeight = mergeAverageHeight(previous.averageHeight, region.averageHeight),
+                    rows = previous.rows + region.rows
                 )
             } else {
                 merged += region
             }
         }
         return merged
+    }
+
+    private fun buildReadableTextWithSegments(paragraphs: List<ParagraphEntry>): ReadableText {
+        val builder = StringBuilder()
+        val segments = mutableListOf<OcrReadSegment>()
+
+        paragraphs.forEachIndexed { paragraphIndex, paragraph ->
+            if (paragraphIndex > 0) {
+                builder.append("\n\n")
+            }
+
+            paragraph.rows.forEachIndexed { rowIndex, row ->
+                if (rowIndex > 0) {
+                    builder.append(' ')
+                }
+
+                val start = builder.length
+                builder.append(row.text)
+                val end = builder.length
+                if (start < end) {
+                    segments += OcrReadSegment(
+                        text = row.text,
+                        bounds = Rect(row.bounds),
+                        startIndex = start,
+                        endIndex = end
+                    )
+                }
+            }
+        }
+
+        return ReadableText(builder.toString().trim(), segments)
     }
 
     private fun shouldIgnoreLine(entry: LineEntry, imageWidth: Int, imageHeight: Int): Boolean {
@@ -510,7 +576,18 @@ class OcrEngine(context: Context) {
     private data class ParagraphEntry(
         val text: String,
         val bounds: Rect,
-        val averageHeight: Double
+        val averageHeight: Double,
+        val rows: List<ReadRow>
+    )
+
+    private data class ReadRow(
+        val text: String,
+        val bounds: Rect
+    )
+
+    private data class ReadableText(
+        val text: String,
+        val segments: List<OcrReadSegment>
     )
 
     private data class ScaledBitmap(

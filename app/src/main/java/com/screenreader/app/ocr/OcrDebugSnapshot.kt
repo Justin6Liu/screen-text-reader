@@ -8,5 +8,6 @@ data class OcrDebugSnapshot(
     val lineBounds: List<Rect>,
     val paragraphBounds: List<Rect>,
     val sourceLabel: String = "full screen",
-    val referenceParagraphBounds: List<Rect> = emptyList()
+    val referenceParagraphBounds: List<Rect> = emptyList(),
+    val activeReadBounds: Rect? = null
 )
