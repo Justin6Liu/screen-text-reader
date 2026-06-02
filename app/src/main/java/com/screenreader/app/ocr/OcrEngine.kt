@@ -413,7 +413,7 @@ class OcrEngine(context: Context) {
 
     private fun buildReadableTextWithSegments(paragraphs: List<ParagraphEntry>): ReadableText {
         val builder = StringBuilder()
-        val segments = mutableListOf<OcrReadSegment>()
+        val rowsWithRanges = mutableListOf<ReadRowWithRange>()
 
         paragraphs.forEachIndexed { paragraphIndex, paragraph ->
             if (paragraphIndex > 0) {
@@ -429,9 +429,9 @@ class OcrEngine(context: Context) {
                 builder.append(row.text)
                 val end = builder.length
                 if (start < end) {
-                    segments += OcrReadSegment(
+                    rowsWithRanges += ReadRowWithRange(
                         text = row.text,
-                        bounds = Rect(row.bounds),
+                        bounds = row.bounds,
                         startIndex = start,
                         endIndex = end
                     )
@@ -439,7 +439,69 @@ class OcrEngine(context: Context) {
             }
         }
 
-        return ReadableText(builder.toString().trim(), segments)
+        val text = builder.toString().trim()
+        return ReadableText(text, buildPhraseSegments(text, rowsWithRanges))
+    }
+
+    private fun buildPhraseSegments(text: String, rows: List<ReadRowWithRange>): List<OcrReadSegment> {
+        if (text.isBlank() || rows.isEmpty()) return emptyList()
+
+        val segments = mutableListOf<OcrReadSegment>()
+        var phraseStart = 0
+        var phraseRows = mutableListOf<ReadRowWithRange>()
+
+        for (row in rows) {
+            phraseRows += row
+            val phraseText = text.substring(phraseStart, row.endIndex).trim()
+            val shouldClosePhrase =
+                phraseText.endsWithSentenceBoundary() ||
+                    phraseText.length >= MAX_PHRASE_SEGMENT_CHARS ||
+                    row.endsBeforeParagraphBreak(text)
+
+            if (shouldClosePhrase) {
+                addPhraseSegment(text, phraseStart, row.endIndex, phraseRows, segments)
+                phraseStart = nextNonWhitespaceIndex(text, row.endIndex)
+                phraseRows = mutableListOf()
+            }
+        }
+
+        if (phraseRows.isNotEmpty()) {
+            addPhraseSegment(text, phraseStart, phraseRows.last().endIndex, phraseRows, segments)
+        }
+
+        return segments
+    }
+
+    private fun addPhraseSegment(
+        fullText: String,
+        start: Int,
+        end: Int,
+        rows: List<ReadRowWithRange>,
+        segments: MutableList<OcrReadSegment>
+    ) {
+        val safeStart = start.coerceIn(0, fullText.length)
+        val safeEnd = end.coerceIn(safeStart, fullText.length)
+        val text = fullText.substring(safeStart, safeEnd).trim()
+        if (text.isBlank() || rows.isEmpty()) return
+
+        segments += OcrReadSegment(
+            text = text,
+            bounds = rows.map { it.bounds }.unionRectBounds(),
+            startIndex = safeStart,
+            endIndex = safeEnd
+        )
+    }
+
+    private fun nextNonWhitespaceIndex(text: String, start: Int): Int {
+        var index = start
+        while (index < text.length && text[index].isWhitespace()) {
+            index++
+        }
+        return index
+    }
+
+    private fun ReadRowWithRange.endsBeforeParagraphBreak(text: String): Boolean {
+        return text.substring(endIndex, minOf(text.length, endIndex + 2)).contains("\n\n")
     }
 
     private fun shouldIgnoreLine(entry: LineEntry, imageWidth: Int, imageHeight: Int): Boolean {
@@ -516,6 +578,13 @@ class OcrEngine(context: Context) {
         return endsWith('。') || endsWith('！') || endsWith('？') || endsWith('：') || endsWith('；')
     }
 
+    private fun String.endsWithSentenceBoundary(): Boolean {
+        val last = trimEnd().lastOrNull() ?: return false
+        return last == '。' || last == '！' || last == '？' ||
+            last == '.' || last == '!' || last == '?' ||
+            last == '；' || last == ';'
+    }
+
     private fun Char.isAsciiLetterOrDigit(): Boolean {
         return this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
     }
@@ -543,6 +612,14 @@ class OcrEngine(context: Context) {
         val top = minOf { it.bounds.top }
         val right = maxOf { it.bounds.right }
         val bottom = maxOf { it.bounds.bottom }
+        return Rect(left, top, right, bottom)
+    }
+
+    private fun List<Rect>.unionRectBounds(): Rect {
+        val left = minOf { it.left }
+        val top = minOf { it.top }
+        val right = maxOf { it.right }
+        val bottom = maxOf { it.bottom }
         return Rect(left, top, right, bottom)
     }
 
@@ -583,6 +660,13 @@ class OcrEngine(context: Context) {
     private data class ReadRow(
         val text: String,
         val bounds: Rect
+    )
+
+    private data class ReadRowWithRange(
+        val text: String,
+        val bounds: Rect,
+        val startIndex: Int,
+        val endIndex: Int
     )
 
     private data class ReadableText(
@@ -671,6 +755,7 @@ class OcrEngine(context: Context) {
         private const val MAX_REGION_RERUNS = 4
         private const val REGION_RERUN_SCORE_BONUS = 16
         private const val SCORE_SWITCH_MARGIN = 18
+        private const val MAX_PHRASE_SEGMENT_CHARS = 48
 
         private val STATUS_BAR_PATTERNS = listOf(
             Regex("""^\d{1,2}:\d{2}$"""),
