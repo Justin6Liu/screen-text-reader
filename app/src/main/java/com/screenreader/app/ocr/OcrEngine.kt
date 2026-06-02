@@ -429,7 +429,7 @@ class OcrEngine(context: Context) {
 
             paragraph.rows.forEachIndexed { rowIndex, row ->
                 if (rowIndex > 0) {
-                    builder.append(' ')
+                    appendRowSeparator(builder, row.text)
                 }
 
                 val start = builder.length
@@ -448,6 +448,14 @@ class OcrEngine(context: Context) {
 
         val text = builder.toString().trim()
         return ReadableText(text, buildPhraseSegments(text, rowsWithRanges))
+    }
+
+    private fun appendRowSeparator(builder: StringBuilder, nextText: String) {
+        val previous = builder.lastOrNull() ?: return
+        val next = nextText.firstOrNull() ?: return
+        if (previous.isAsciiLetterOrDigit() && next.isAsciiLetterOrDigit()) {
+            builder.append(' ')
+        }
     }
 
     private fun buildPhraseSegments(text: String, rows: List<ReadRowWithRange>): List<OcrReadSegment> {
@@ -786,7 +794,7 @@ class OcrEngine(context: Context) {
         private const val MAX_REGION_RERUNS = 4
         private const val REGION_RERUN_SCORE_BONUS = 16
         private const val SCORE_SWITCH_MARGIN = 18
-        private const val MAX_PHRASE_SEGMENT_CHARS = 48
+        private const val MAX_PHRASE_SEGMENT_CHARS = 70
         private const val AGGRESSIVE_TOP_ROW_FILTER_COUNT = 5
 
         private val TOP_ROW_TIME_PATTERN = Regex("""(^|[^\d])\d{1,2}[:：]\d{2}([^\d]|$)""")
