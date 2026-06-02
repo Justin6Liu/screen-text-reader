@@ -112,7 +112,9 @@ object ScreenReaderController {
 
     fun readDemoText() {
         val started = speechManager?.speak("屏幕朗读测试。请先确认中文语音可以正常播放。") == true
-        updateStatus(if (started) "Playing demo speech." else "Speech is not ready yet.")
+        if (started) {
+            updateStatus("Playing demo speech.")
+        }
     }
 
     fun getUiStatus(): String = lastStatus
