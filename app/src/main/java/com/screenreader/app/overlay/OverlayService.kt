@@ -200,9 +200,14 @@ class OverlayService : Service(),
     private fun showDebugOverlay(snapshot: OcrDebugSnapshot) {
         if (debugOverlayView == null) {
             debugOverlayView = OcrDebugOverlayView(this)
+            val displayBounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                windowManager.currentWindowMetrics.bounds
+            } else {
+                null
+            }
             val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
+                displayBounds?.width() ?: WindowManager.LayoutParams.MATCH_PARENT,
+                displayBounds?.height() ?: WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -216,6 +221,10 @@ class OverlayService : Service(),
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     layoutInDisplayCutoutMode =
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    fitInsetsTypes = 0
+                    fitInsetsSides = 0
                 }
             }
             windowManager.addView(debugOverlayView, params)

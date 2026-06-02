@@ -3,12 +3,12 @@ package com.screenreader.app.overlay
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.view.View
 import com.screenreader.app.ocr.OcrDebugSnapshot
-import kotlin.math.min
 
 class OcrDebugOverlayView(context: Context) : View(context) {
 
@@ -27,6 +27,13 @@ class OcrDebugOverlayView(context: Context) : View(context) {
         color = Color.argb(220, 255, 171, 64)
         style = Paint.Style.STROKE
         strokeWidth = 6f
+    }
+
+    private val referenceParagraphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(230, 255, 64, 180)
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+        pathEffect = DashPathEffect(floatArrayOf(18f, 12f), 0f)
     }
 
     private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -52,24 +59,26 @@ class OcrDebugOverlayView(context: Context) : View(context) {
         val data = snapshot ?: return
         if (data.imageWidth <= 0 || data.imageHeight <= 0) return
 
-        val scale = min(width.toFloat() / data.imageWidth.toFloat(), height.toFloat() / data.imageHeight.toFloat())
-        val offsetX = (width - data.imageWidth * scale) / 2f
-        val offsetY = (height - data.imageHeight * scale) / 2f
+        val scaleX = width.toFloat() / data.imageWidth.toFloat()
+        val scaleY = height.toFloat() / data.imageHeight.toFloat()
 
         data.lineBounds.forEach { rect ->
-            val scaledRect = rect.toScaledRectF(scale, offsetX, offsetY, rectBuffer)
+            val scaledRect = rect.toScaledRectF(scaleX, scaleY, rectBuffer)
             canvas.drawRect(scaledRect, lineFillPaint)
             canvas.drawRect(scaledRect, linePaint)
         }
         data.paragraphBounds.forEach { rect ->
-            canvas.drawRect(rect.toScaledRectF(scale, offsetX, offsetY, rectBuffer), paragraphPaint)
+            canvas.drawRect(rect.toScaledRectF(scaleX, scaleY, rectBuffer), paragraphPaint)
+        }
+        data.referenceParagraphBounds.forEach { rect ->
+            canvas.drawRect(rect.toScaledRectF(scaleX, scaleY, rectBuffer), referenceParagraphPaint)
         }
 
-        drawLegend(canvas)
+        drawLegend(canvas, data)
     }
 
-    private fun drawLegend(canvas: Canvas) {
-        val text = "Debug OCR  Orange=paragraph  Cyan=line"
+    private fun drawLegend(canvas: Canvas, data: OcrDebugSnapshot) {
+        val text = "Debug OCR  ${data.sourceLabel}  image=${data.imageWidth}x${data.imageHeight} view=${width}x${height}"
         val paddingHorizontal = 24f
         val paddingVertical = 16f
         val textWidth = labelTextPaint.measureText(text)
@@ -82,12 +91,12 @@ class OcrDebugOverlayView(context: Context) : View(context) {
         canvas.drawText(text, left + paddingHorizontal, bottom - paddingVertical, labelTextPaint)
     }
 
-    private fun Rect.toScaledRectF(scale: Float, offsetX: Float, offsetY: Float, outRect: RectF): RectF {
+    private fun Rect.toScaledRectF(scaleX: Float, scaleY: Float, outRect: RectF): RectF {
         outRect.set(
-            left * scale + offsetX,
-            top * scale + offsetY,
-            right * scale + offsetX,
-            bottom * scale + offsetY
+            left * scaleX,
+            top * scaleY,
+            right * scaleX,
+            bottom * scaleY
         )
         return outRect
     }
