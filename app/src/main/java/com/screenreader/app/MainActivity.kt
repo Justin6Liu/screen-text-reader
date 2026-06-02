@@ -34,6 +34,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var testReadButton: Button
     private lateinit var debugModeCheckBox: CheckBox
     private lateinit var saveDebugScreenshotsCheckBox: CheckBox
+    private lateinit var recognizedTextConsoleCheckBox: CheckBox
+    private lateinit var recognizedTextConsoleTitle: TextView
+    private lateinit var recognizedTextConsoleText: TextView
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -55,6 +58,9 @@ class MainActivity : AppCompatActivity() {
         testReadButton = findViewById(R.id.testReadButton)
         debugModeCheckBox = findViewById(R.id.debugModeCheckBox)
         saveDebugScreenshotsCheckBox = findViewById(R.id.saveDebugScreenshotsCheckBox)
+        recognizedTextConsoleCheckBox = findViewById(R.id.recognizedTextConsoleCheckBox)
+        recognizedTextConsoleTitle = findViewById(R.id.recognizedTextConsoleTitle)
+        recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
 
         debugModeCheckBox.isChecked = AppPreferences.isOcrDebugModeEnabled(this)
         debugModeCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
@@ -66,6 +72,12 @@ class MainActivity : AppCompatActivity() {
         saveDebugScreenshotsCheckBox.isChecked = AppPreferences.isSaveDebugScreenshotsEnabled(this)
         saveDebugScreenshotsCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
             AppPreferences.setSaveDebugScreenshotsEnabled(this, isChecked)
+            refreshStatus()
+        }
+
+        recognizedTextConsoleCheckBox.isChecked = AppPreferences.isRecognizedTextConsoleEnabled(this)
+        recognizedTextConsoleCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            AppPreferences.setRecognizedTextConsoleEnabled(this, isChecked)
             refreshStatus()
         }
 
@@ -127,10 +139,16 @@ class MainActivity : AppCompatActivity() {
             appendLine("Overlay service: ${if (overlayRunning) "Running" else "Stopped"}")
             appendLine("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
             appendLine("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
-            append("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
+            appendLine("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
+            append("Text console: ${if (AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity)) "On" else "Off"}")
         }
 
         speechStatusText.text = ScreenReaderController.getUiStatus()
+        val showConsole = AppPreferences.isRecognizedTextConsoleEnabled(this)
+        val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
+        recognizedTextConsoleTitle.visibility = visibility
+        recognizedTextConsoleText.visibility = visibility
+        recognizedTextConsoleText.text = ScreenReaderController.getLastRecognizedText()
     }
 
     private fun packageUri(): Uri = Uri.parse("package:$packageName")

@@ -25,6 +25,8 @@ object ScreenReaderController {
 
     @Volatile
     private var lastStatus: String = "Ready. Grant permissions, start the overlay, then tap the floating button."
+    @Volatile
+    private var lastRecognizedText: String = "No recognized text yet."
 
     private var speechManager: SpeechManager? = null
     private var ocrEngine: OcrEngine? = null
@@ -89,6 +91,7 @@ object ScreenReaderController {
                         result
                             ?.onSuccess { output ->
                                 maybeEmitDebugSnapshot(output.debugSnapshot)
+                                updateRecognizedText(output.text)
                                 if (output.text.isBlank()) {
                                     finishWithStatus("No text found on screen.")
                                 } else {
@@ -123,6 +126,8 @@ object ScreenReaderController {
     }
 
     fun getUiStatus(): String = lastStatus
+
+    fun getLastRecognizedText(): String = lastRecognizedText
 
     fun reportStatus(message: String) {
         updateStatus(message)
@@ -170,6 +175,10 @@ object ScreenReaderController {
 
     private fun updateStatus(message: String) {
         lastStatus = message
+    }
+
+    private fun updateRecognizedText(text: String) {
+        lastRecognizedText = text.ifBlank { "No text found on screen." }
     }
 
     private fun updateState(newState: ReaderState) {
