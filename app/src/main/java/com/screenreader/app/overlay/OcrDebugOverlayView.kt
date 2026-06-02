@@ -90,7 +90,9 @@ class OcrDebugOverlayView(context: Context) : View(context) {
             canvas.drawRect(scaledRect, activeReadPaint)
         }
 
-        drawLegend(canvas, data)
+        if (data.activeReadBounds == null) {
+            drawLegend(canvas, data)
+        }
     }
 
     private fun drawLegend(canvas: Canvas, data: OcrDebugSnapshot) {

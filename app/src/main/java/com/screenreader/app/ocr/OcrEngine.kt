@@ -120,21 +120,28 @@ class OcrEngine(context: Context) {
         var previousRowBottom: Int? = null
         var previousRowRight: Int? = null
         var previousRowHeight: Double? = null
+        var nonBlankRowIndex = 0
 
         for (row in orderedRows) {
-            val rowTop = row.minOf { it.bounds.top }
-            val rowBottom = row.maxOf { it.bounds.bottom }
-            val rowLeft = row.minOf { it.bounds.left }
-            val rowHeight = row.averageHeight()
+            val readableRow = row.filterNot { it.text.isSingleCloseButtonText() }
+            if (readableRow.isEmpty()) continue
+
+            val rowTop = readableRow.minOf { it.bounds.top }
+            val rowBottom = readableRow.maxOf { it.bounds.bottom }
+            val rowLeft = readableRow.minOf { it.bounds.left }
+            val rowHeight = readableRow.averageHeight()
             val paragraphGap = max(max(previousRowHeight ?: rowHeight, rowHeight) * 3.6, baselineHeight * 2.8)
                 .roundToInt()
                 .coerceAtLeast(108)
             val columnGap = max(rowHeight * 5.8, baselineHeight * 4.6)
                 .roundToInt()
                 .coerceAtLeast(260)
-            val rowText = buildRowText(row, columnGap)
+            val rowText = buildRowText(readableRow, columnGap)
             if (rowText.isBlank()) continue
-            val rowBounds = row.unionBounds()
+            val currentRowIndex = nonBlankRowIndex
+            nonBlankRowIndex++
+            if (shouldIgnoreReadableRow(rowText, currentRowIndex)) continue
+            val rowBounds = readableRow.unionBounds()
 
             val startsNewParagraph =
                 previousRowBottom == null ||
@@ -159,7 +166,7 @@ class OcrEngine(context: Context) {
             }
 
             previousRowBottom = rowBottom
-            previousRowRight = row.maxOf { it.bounds.right }
+            previousRowRight = readableRow.maxOf { it.bounds.right }
             previousRowHeight = rowHeight
         }
 
@@ -538,6 +545,13 @@ class OcrEngine(context: Context) {
         return isTopBarLike || isBottomEdgeJunk || isTinyEdgeText || isStatusBarPattern || isVeryShortEdgeGarbage
     }
 
+    private fun shouldIgnoreReadableRow(text: String, rowIndex: Int): Boolean {
+        val normalized = text.trim()
+        if (normalized.isSingleCloseButtonText()) return true
+        if (rowIndex < AGGRESSIVE_TOP_ROW_FILTER_COUNT && normalized.containsTopUiJunk()) return true
+        return false
+    }
+
     private fun mergeParagraph(existing: String, next: String): String {
         val trimmedExisting = existing.trimEnd()
         val separator = when {
@@ -583,6 +597,23 @@ class OcrEngine(context: Context) {
         return last == '。' || last == '！' || last == '？' ||
             last == '.' || last == '!' || last == '?' ||
             last == '；' || last == ';'
+    }
+
+    private fun String.containsTopUiJunk(): Boolean {
+        return TOP_ROW_TIME_PATTERN.containsMatchIn(this) ||
+            contains(".com", ignoreCase = true) ||
+            contains("www.", ignoreCase = true) ||
+            contains("http://", ignoreCase = true) ||
+            contains("https://", ignoreCase = true)
+    }
+
+    private fun String.isSingleCloseButtonText(): Boolean {
+        val compact = replace("\\s+".toRegex(), "")
+        return compact == "X" ||
+            compact == "x" ||
+            compact == "×" ||
+            compact == "✕" ||
+            compact == "✖"
     }
 
     private fun Char.isAsciiLetterOrDigit(): Boolean {
@@ -756,6 +787,9 @@ class OcrEngine(context: Context) {
         private const val REGION_RERUN_SCORE_BONUS = 16
         private const val SCORE_SWITCH_MARGIN = 18
         private const val MAX_PHRASE_SEGMENT_CHARS = 48
+        private const val AGGRESSIVE_TOP_ROW_FILTER_COUNT = 5
+
+        private val TOP_ROW_TIME_PATTERN = Regex("""(^|[^\d])\d{1,2}[:：]\d{2}([^\d]|$)""")
 
         private val STATUS_BAR_PATTERNS = listOf(
             Regex("""^\d{1,2}:\d{2}$"""),
