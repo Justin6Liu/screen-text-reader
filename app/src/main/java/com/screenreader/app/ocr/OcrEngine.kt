@@ -20,20 +20,22 @@ class OcrEngine(context: Context) {
     fun recognize(bitmap: Bitmap): Result<OcrOutput> {
         return runCatching {
             val scaledBitmap = downscale(bitmap)
-            val originalResult = processVariant(
-                ImageVariant(bitmap = scaledBitmap.bitmap, offsetY = 0),
-                scaledBitmap.bitmap.width,
-                scaledBitmap.bitmap.height
-            )
-            val enhancedResult = processVariant(
-                ImageVariant(
-                    bitmap = enhanceForOcr(scaledBitmap.bitmap),
-                    offsetY = 0
-                ),
-                scaledBitmap.bitmap.width,
-                scaledBitmap.bitmap.height
-            )
-            chooseBetterResult(originalResult, enhancedResult).output
+            val sourceBitmap = scaledBitmap.bitmap
+            val fullWidth = sourceBitmap.width
+            val fullHeight = sourceBitmap.height
+
+            val globalResult = listOf(
+                ImageVariant(bitmap = sourceBitmap),
+                ImageVariant(bitmap = enhanceForOcr(sourceBitmap)),
+                createUpscaledVariant(sourceBitmap, UPSCALE_FACTOR),
+                createUpscaledVariant(enhanceForOcr(sourceBitmap), UPSCALE_FACTOR)
+            ).filterNotNull()
+                .map { variant -> processVariant(variant, fullWidth, fullHeight) }
+                .maxByOrNull { it.score }
+                ?: ProcessedOcrResult.empty(fullWidth, fullHeight)
+
+            val regionResult = rerunParagraphRegions(sourceBitmap, globalResult, fullWidth, fullHeight)
+            chooseBetterResult(globalResult, regionResult).output
         }
     }
 
@@ -61,14 +63,14 @@ class OcrEngine(context: Context) {
     ): ProcessedOcrResult {
         val image = InputImage.fromBitmap(imageVariant.bitmap, 0)
         val result = Tasks.await(recognizer.process(image))
-        return buildReadableResult(result, fullImageWidth, fullImageHeight, imageVariant.offsetY)
+        return buildReadableResult(result, fullImageWidth, fullImageHeight, imageVariant)
     }
 
     private fun buildReadableResult(
         result: Text,
         imageWidth: Int,
         imageHeight: Int,
-        offsetY: Int
+        imageVariant: ImageVariant
     ): ProcessedOcrResult {
         val lineEntries = result.textBlocks
             .flatMap { block ->
@@ -78,7 +80,7 @@ class OcrEngine(context: Context) {
                     if (text.isBlank()) return@mapNotNull null
                     LineEntry(
                         text = text,
-                        bounds = bounds.offsetBy(0, offsetY)
+                        bounds = bounds.mapToFullImage(imageVariant)
                     )
                 }
             }
@@ -168,7 +170,110 @@ class OcrEngine(context: Context) {
                     paragraphBounds = paragraphs.map { Rect(it.bounds) }
                 )
             ),
-            score = finalText.countMeaningfulChars() + lineEntries.size * 4 + paragraphs.size * 8
+            score = finalText.scoreReadableText(lineEntries.size, paragraphs.size),
+            paragraphBounds = paragraphs.map { Rect(it.bounds) }
+        )
+    }
+
+    private fun rerunParagraphRegions(
+        sourceBitmap: Bitmap,
+        globalResult: ProcessedOcrResult,
+        fullImageWidth: Int,
+        fullImageHeight: Int
+    ): ProcessedOcrResult {
+        val significantBounds = globalResult.paragraphBounds
+            .filter { bounds ->
+                bounds.width() >= fullImageWidth * 0.25 &&
+                    bounds.height() >= fullImageHeight * 0.035
+            }
+
+        if (significantBounds.isEmpty() || significantBounds.size > MAX_REGION_RERUNS) {
+            return globalResult
+        }
+
+        val regionResults = significantBounds.mapNotNull { bounds ->
+            val cropBounds = bounds.expandWithin(
+                sourceBitmap.width,
+                sourceBitmap.height,
+                horizontalPadding = (bounds.width() * 0.035).roundToInt().coerceAtLeast(12),
+                verticalPadding = (bounds.height() * 0.18).roundToInt().coerceAtLeast(16)
+            )
+            val crop = Bitmap.createBitmap(
+                sourceBitmap,
+                cropBounds.left,
+                cropBounds.top,
+                cropBounds.width(),
+                cropBounds.height()
+            )
+            val upscaledCrop = upscaleRegionIfUseful(crop)
+            val variant = ImageVariant(
+                bitmap = enhanceForOcr(upscaledCrop.bitmap),
+                offsetX = cropBounds.left,
+                offsetY = cropBounds.top,
+                scaleXToFull = cropBounds.width().toFloat() / upscaledCrop.bitmap.width.toFloat(),
+                scaleYToFull = cropBounds.height().toFloat() / upscaledCrop.bitmap.height.toFloat()
+            )
+            processVariant(variant, fullImageWidth, fullImageHeight).takeIf { it.output.text.isNotBlank() }
+        }
+
+        if (regionResults.isEmpty()) return globalResult
+
+        val combinedText = regionResults.joinToString(separator = "\n\n") { it.output.text }.trim()
+        val combinedLineBounds = regionResults.flatMap { it.output.debugSnapshot?.lineBounds ?: emptyList() }
+        val combinedParagraphBounds = regionResults.flatMap { it.paragraphBounds }
+        val combinedScore = combinedText.scoreReadableText(
+            lineCount = combinedLineBounds.size,
+            paragraphCount = combinedParagraphBounds.size
+        ) + REGION_RERUN_SCORE_BONUS
+
+        return ProcessedOcrResult(
+            output = OcrOutput(
+                text = combinedText,
+                debugSnapshot = OcrDebugSnapshot(
+                    imageWidth = fullImageWidth,
+                    imageHeight = fullImageHeight,
+                    lineBounds = combinedLineBounds,
+                    paragraphBounds = combinedParagraphBounds
+                )
+            ),
+            score = combinedScore,
+            paragraphBounds = combinedParagraphBounds
+        )
+    }
+
+    private fun createUpscaledVariant(bitmap: Bitmap, factor: Float): ImageVariant? {
+        val longestSide = maxOf(bitmap.width, bitmap.height)
+        if (longestSide >= MAX_UPSCALED_DIMENSION) return null
+
+        val scale = minOf(factor, MAX_UPSCALED_DIMENSION.toFloat() / longestSide.toFloat())
+        if (scale <= 1.05f) return null
+
+        val scaledWidth = (bitmap.width * scale).roundToInt().coerceAtLeast(1)
+        val scaledHeight = (bitmap.height * scale).roundToInt().coerceAtLeast(1)
+        return ImageVariant(
+            bitmap = Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true),
+            scaleXToFull = bitmap.width.toFloat() / scaledWidth.toFloat(),
+            scaleYToFull = bitmap.height.toFloat() / scaledHeight.toFloat()
+        )
+    }
+
+    private fun upscaleRegionIfUseful(bitmap: Bitmap): ScaledBitmap {
+        val longestSide = maxOf(bitmap.width, bitmap.height)
+        if (longestSide >= REGION_TARGET_LONG_SIDE) return ScaledBitmap(bitmap)
+
+        val scale = minOf(
+            REGION_TARGET_LONG_SIDE.toFloat() / longestSide.toFloat(),
+            REGION_MAX_UPSCALE
+        )
+        if (scale <= 1.05f) return ScaledBitmap(bitmap)
+
+        return ScaledBitmap(
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).roundToInt().coerceAtLeast(1),
+                (bitmap.height * scale).roundToInt().coerceAtLeast(1),
+                true
+            )
         )
     }
 
@@ -195,7 +300,7 @@ class OcrEngine(context: Context) {
     }
 
     private fun chooseBetterResult(first: ProcessedOcrResult, second: ProcessedOcrResult): ProcessedOcrResult {
-        return if (second.score > first.score) second else first
+        return if (second.score > first.score + SCORE_SWITCH_MARGIN) second else first
     }
 
     private fun buildRowText(row: List<LineEntry>, columnGap: Int): String {
@@ -321,12 +426,31 @@ class OcrEngine(context: Context) {
         return count { !it.isWhitespace() && it != '，' && it != '。' }
     }
 
+    private fun String.scoreReadableText(lineCount: Int, paragraphCount: Int): Int {
+        val meaningfulChars = countMeaningfulChars()
+        val chineseChars = count { it.isChineseCharacter() }
+        val suspiciousChars = count { it.isSuspiciousOcrCharacter() }
+        return meaningfulChars +
+            chineseChars * 2 +
+            lineCount * 4 +
+            paragraphCount * 8 -
+            suspiciousChars * 6
+    }
+
     private fun String.endsWithChinesePunctuation(): Boolean {
         return endsWith('。') || endsWith('！') || endsWith('？') || endsWith('：') || endsWith('；')
     }
 
     private fun Char.isAsciiLetterOrDigit(): Boolean {
         return this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
+    }
+
+    private fun Char.isChineseCharacter(): Boolean {
+        return this in '\u4e00'..'\u9fff'
+    }
+
+    private fun Char.isSuspiciousOcrCharacter(): Boolean {
+        return this == '\uFFFD' || this == '□' || this == '■'
     }
 
     private fun <T> MutableList<T>.removeLast(): T = removeAt(lastIndex)
@@ -386,13 +510,34 @@ class OcrEngine(context: Context) {
 
     private data class ImageVariant(
         val bitmap: Bitmap,
-        val offsetY: Int
+        val offsetX: Int = 0,
+        val offsetY: Int = 0,
+        val scaleXToFull: Float = 1.0f,
+        val scaleYToFull: Float = 1.0f
     )
 
     private data class ProcessedOcrResult(
         val output: OcrOutput,
-        val score: Int
-    )
+        val score: Int,
+        val paragraphBounds: List<Rect> = emptyList()
+    ) {
+        companion object {
+            fun empty(imageWidth: Int, imageHeight: Int): ProcessedOcrResult {
+                return ProcessedOcrResult(
+                    output = OcrOutput(
+                        text = "",
+                        debugSnapshot = OcrDebugSnapshot(
+                            imageWidth = imageWidth,
+                            imageHeight = imageHeight,
+                            lineBounds = emptyList(),
+                            paragraphBounds = emptyList()
+                        )
+                    ),
+                    score = 0
+                )
+            }
+        }
+    }
 
     private fun Rect.unionWith(other: Rect): Rect {
         return Rect(
@@ -403,11 +548,38 @@ class OcrEngine(context: Context) {
         )
     }
 
-    private fun Rect.offsetBy(dx: Int, dy: Int): Rect {
-        return Rect(left + dx, top + dy, right + dx, bottom + dy)
+    private fun Rect.mapToFullImage(imageVariant: ImageVariant): Rect {
+        return Rect(
+            (left * imageVariant.scaleXToFull).roundToInt() + imageVariant.offsetX,
+            (top * imageVariant.scaleYToFull).roundToInt() + imageVariant.offsetY,
+            (right * imageVariant.scaleXToFull).roundToInt() + imageVariant.offsetX,
+            (bottom * imageVariant.scaleYToFull).roundToInt() + imageVariant.offsetY
+        )
+    }
+
+    private fun Rect.expandWithin(
+        imageWidth: Int,
+        imageHeight: Int,
+        horizontalPadding: Int,
+        verticalPadding: Int
+    ): Rect {
+        return Rect(
+            (left - horizontalPadding).coerceAtLeast(0),
+            (top - verticalPadding).coerceAtLeast(0),
+            (right + horizontalPadding).coerceAtMost(imageWidth),
+            (bottom + verticalPadding).coerceAtMost(imageHeight)
+        )
     }
 
     companion object {
+        private const val UPSCALE_FACTOR = 1.32f
+        private const val MAX_UPSCALED_DIMENSION = 2800
+        private const val REGION_TARGET_LONG_SIDE = 1900
+        private const val REGION_MAX_UPSCALE = 1.7f
+        private const val MAX_REGION_RERUNS = 4
+        private const val REGION_RERUN_SCORE_BONUS = 16
+        private const val SCORE_SWITCH_MARGIN = 18
+
         private val STATUS_BAR_PATTERNS = listOf(
             Regex("""^\d{1,2}:\d{2}$"""),
             Regex("""^\d{1,2}:\d{2}\s?[AP]M$""", RegexOption.IGNORE_CASE),
