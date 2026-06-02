@@ -71,7 +71,12 @@ object ScreenReaderController {
             return
         }
         if (state == ReaderState.SPEAKING) {
-            pauseSpeaking()
+            val context = appContext
+            if (context != null && AppPreferences.isPauseResumeReadingEnabled(context)) {
+                pauseSpeaking()
+            } else {
+                haltReading()
+            }
             return
         }
         if (state == ReaderState.PAUSED) {

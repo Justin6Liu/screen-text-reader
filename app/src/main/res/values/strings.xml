@@ -7,6 +7,7 @@
     <string name="save_debug_screenshots_label">Save debug screenshots locally</string>
     <string name="recognized_text_console_label">Show recognized text in app</string>
     <string name="highlight_reading_line_label">Highlight line while reading</string>
+    <string name="pause_resume_reading_label">Tap to pause and resume reading</string>
     <string name="recognized_text_console_title">Recognized Text</string>
     <string name="status_title">Device Status</string>
     <string name="grant_overlay_permission">Grant Overlay Permission</string>
