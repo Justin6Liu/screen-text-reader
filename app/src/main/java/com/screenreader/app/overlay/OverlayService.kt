@@ -26,6 +26,7 @@ import androidx.core.app.NotificationCompat
 import com.screenreader.app.MainActivity
 import com.screenreader.app.R
 import com.screenreader.app.ocr.OcrDebugSnapshot
+import com.screenreader.app.runtime.AppPreferences
 import com.screenreader.app.runtime.ScreenReaderController
 import com.screenreader.app.runtime.ScreenReaderController.ReaderState
 
@@ -57,7 +58,10 @@ class OverlayService : Service(),
         createNotificationChannel()
         startAsForegroundService()
         if (!Settings.canDrawOverlays(this)) {
-            val message = "Overlay permission is missing. Grant it first, then start the floating button again."
+            val message = text(
+                "Overlay permission is missing. Grant it first, then start the floating button again.",
+                "缺少悬浮窗权限。请先授权，然后再启动悬浮按钮。"
+            )
             ScreenReaderController.reportStatus(message)
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             stopSelf()
@@ -172,7 +176,7 @@ class OverlayService : Service(),
             private val redoRead = Runnable {
                 longPressTriggered = true
                 ScreenReaderController.haltReading()
-                Toast.makeText(this@OverlayService, "Reading halted.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@OverlayService, text("Reading halted.", "朗读已终止。"), Toast.LENGTH_SHORT).show()
             }
 
             override fun onTouch(v: View, event: MotionEvent): Boolean {
@@ -328,12 +332,12 @@ class OverlayService : Service(),
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
+            .setContentTitle(text("Screen Reader is running", "屏幕朗读正在运行"))
+            .setContentText(text("Tap the floating button to read text.", "点击悬浮按钮朗读文字。"))
             .setContentIntent(openAppIntent)
             .setOngoing(true)
-            .addAction(0, getString(R.string.stop_speech), stopSpeechIntent)
-            .addAction(0, getString(R.string.stop_overlay), stopIntent)
+            .addAction(0, text("Stop Speech", "停止朗读"), stopSpeechIntent)
+            .addAction(0, text("Stop Floating Button", "关闭悬浮按钮"), stopIntent)
             .build()
     }
 
@@ -393,32 +397,36 @@ class OverlayService : Service(),
         when (state) {
             ReaderState.IDLE -> {
                 overlayButton?.setImageResource(R.drawable.ic_overlay_play)
-                overlayButton?.contentDescription = getString(R.string.overlay_button_read_label)
-                overlayLabel?.text = getString(R.string.overlay_button_read_text)
+                overlayButton?.contentDescription = text("Read screen text", "朗读屏幕文字")
+                overlayLabel?.text = text("Read", "朗读")
                 overlayButton?.alpha = 1.0f
             }
 
             ReaderState.PROCESSING -> {
                 overlayButton?.setImageResource(R.drawable.ic_overlay_busy)
-                overlayButton?.contentDescription = getString(R.string.overlay_button_processing_label)
-                overlayLabel?.text = getString(R.string.overlay_button_processing_text)
+                overlayButton?.contentDescription = text("Recognizing screen text", "正在识别屏幕文字")
+                overlayLabel?.text = text("Working", "处理中")
                 overlayButton?.alpha = 0.85f
             }
 
             ReaderState.SPEAKING -> {
                 overlayButton?.setImageResource(R.drawable.ic_overlay_pause)
-                overlayButton?.contentDescription = getString(R.string.overlay_button_pause_label)
-                overlayLabel?.text = getString(R.string.overlay_button_pause_text)
+                overlayButton?.contentDescription = text("Pause reading aloud", "暂停朗读")
+                overlayLabel?.text = text("Pause", "暂停")
                 overlayButton?.alpha = 1.0f
             }
 
             ReaderState.PAUSED -> {
                 overlayButton?.setImageResource(R.drawable.ic_overlay_play)
-                overlayButton?.contentDescription = getString(R.string.overlay_button_resume_label)
-                overlayLabel?.text = getString(R.string.overlay_button_resume_text)
+                overlayButton?.contentDescription = text("Resume reading aloud", "继续朗读")
+                overlayLabel?.text = text("Resume", "继续")
                 overlayButton?.alpha = 1.0f
             }
         }
+    }
+
+    private fun text(english: String, chinese: String): String {
+        return if (AppPreferences.isChineseUiEnabled(this)) chinese else english
     }
 
     companion object {

@@ -26,6 +26,8 @@ import com.screenreader.app.runtime.ScreenReaderController
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
+    private lateinit var titleText: TextView
+    private lateinit var subtitleText: TextView
     private lateinit var speechStatusText: TextView
     private lateinit var overlayPermissionButton: Button
     private lateinit var accessibilityButton: Button
@@ -35,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stopSpeechButton: Button
     private lateinit var testReadButton: Button
     private lateinit var developerModeButton: Button
+    private lateinit var languageSwitchButton: Button
     private lateinit var developerPasswordInput: EditText
     private lateinit var debugModeCheckBox: CheckBox
     private lateinit var saveDebugScreenshotsCheckBox: CheckBox
@@ -53,6 +56,8 @@ class MainActivity : AppCompatActivity() {
 
         ScreenReaderController.initialize(applicationContext)
 
+        titleText = findViewById(R.id.titleText)
+        subtitleText = findViewById(R.id.subtitleText)
         statusText = findViewById(R.id.statusText)
         speechStatusText = findViewById(R.id.speechStatusText)
         overlayPermissionButton = findViewById(R.id.overlayPermissionButton)
@@ -63,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         stopSpeechButton = findViewById(R.id.stopSpeechButton)
         testReadButton = findViewById(R.id.testReadButton)
         developerModeButton = findViewById(R.id.developerModeButton)
+        languageSwitchButton = findViewById(R.id.languageSwitchButton)
         developerPasswordInput = findViewById(R.id.developerPasswordInput)
         debugModeCheckBox = findViewById(R.id.debugModeCheckBox)
         saveDebugScreenshotsCheckBox = findViewById(R.id.saveDebugScreenshotsCheckBox)
@@ -108,24 +114,35 @@ class MainActivity : AppCompatActivity() {
             if (AppPreferences.isDeveloperModeEnabled(this)) {
                 AppPreferences.setDeveloperModeEnabled(this, false)
                 developerPasswordInput.text.clear()
-                Toast.makeText(this, getString(R.string.developer_mode_off), Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, text("Developer mode is off.", "开发者模式已关闭。"), Toast.LENGTH_SHORT).show()
             } else {
                 val password = developerPasswordInput.text.toString()
                 if (password.isBlank()) {
                     developerPasswordInput.requestFocus()
                     val inputManager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                     inputManager.showSoftInput(developerPasswordInput, InputMethodManager.SHOW_IMPLICIT)
-                    Toast.makeText(this, "Enter developer password.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, text("Enter developer password.", "请输入开发者密码。"), Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
                 if (password == DEVELOPER_PASSWORD) {
                     AppPreferences.setDeveloperModeEnabled(this, true)
                     developerPasswordInput.text.clear()
-                    Toast.makeText(this, getString(R.string.developer_mode_on), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, text("Developer mode is on.", "开发者模式已开启。"), Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(this, "Incorrect password.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, text("Incorrect password.", "密码错误。"), Toast.LENGTH_SHORT).show()
                 }
             }
+            refreshStatus()
+        }
+
+        languageSwitchButton.setOnClickListener {
+            val nextChinese = !AppPreferences.isChineseUiEnabled(this)
+            AppPreferences.setChineseUiEnabled(this, nextChinese)
+            Toast.makeText(
+                this,
+                if (nextChinese) "已切换到中文。" else "Switched to English.",
+                Toast.LENGTH_SHORT
+            ).show()
             refreshStatus()
         }
 
@@ -143,7 +160,7 @@ class MainActivity : AppCompatActivity() {
 
         startOverlayButton.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, "Grant overlay permission first.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, text("Grant overlay permission first.", "请先授予悬浮窗权限。"), Toast.LENGTH_SHORT).show()
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, packageUri()))
                 return@setOnClickListener
             }
@@ -179,32 +196,65 @@ class MainActivity : AppCompatActivity() {
         val accessibilityReady = ScreenReaderController.isAccessibilityReady()
         val overlayRunning = OverlayService.isRunning
         val developerMode = AppPreferences.isDeveloperModeEnabled(this)
+        applyLanguage(developerMode)
 
         statusText.text = buildString {
-            appendLine(getString(R.string.status_title))
+            appendLine(text("Device Status", "设备状态"))
             appendLine()
-            appendLine("Overlay permission: ${if (overlayGranted) "Ready" else "Missing"}")
-            appendLine("Accessibility service: ${if (accessibilityReady) "Connected" else "Not connected"}")
-            appendLine("Overlay service: ${if (overlayRunning) "Running" else "Stopped"}")
-            appendLine("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
-            append("Developer mode: ${if (developerMode) "On" else "Off"}")
+            appendLine("${text("Overlay permission", "悬浮窗权限")}: ${readyText(overlayGranted)}")
+            appendLine("${text("Accessibility service", "无障碍服务")}: ${if (accessibilityReady) text("Connected", "已连接") else text("Not connected", "未连接")}")
+            appendLine("${text("Floating button", "悬浮按钮")}: ${if (overlayRunning) text("Running", "运行中") else text("Stopped", "已停止")}")
+            appendLine("${text("Battery optimization", "电池优化")}: ${if (batteryIgnored) text("Ignored", "已忽略") else text("Default", "默认")}")
+            append("${text("Developer mode", "开发者模式")}: ${onOffText(developerMode)}")
             if (developerMode) {
                 appendLine()
-                appendLine("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
-                appendLine("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
-                appendLine("Text console: ${if (AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity)) "On" else "Off"}")
-                appendLine("Reading line highlight: ${if (AppPreferences.isHighlightReadingLineEnabled(this@MainActivity)) "On" else "Off"}")
-                append("Tap pause/resume: ${if (AppPreferences.isPauseResumeReadingEnabled(this@MainActivity)) "On" else "Off"}")
+                appendLine("${text("OCR debug mode", "OCR 调试框")}: ${onOffText(AppPreferences.isOcrDebugModeEnabled(this@MainActivity))}")
+                appendLine("${text("Save debug screenshots", "保存调试截图")}: ${onOffText(AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity))}")
+                appendLine("${text("Text console", "识别文字显示")}: ${onOffText(AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity))}")
+                appendLine("${text("Reading highlight", "朗读高亮")}: ${onOffText(AppPreferences.isHighlightReadingLineEnabled(this@MainActivity))}")
+                append("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
             }
         }
 
-        speechStatusText.text = ScreenReaderController.getUiStatus()
+        speechStatusText.text = localizeStatus(ScreenReaderController.getUiStatus())
         updateDeveloperControlVisibility(developerMode)
         val showConsole = developerMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
         val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
         recognizedTextConsoleTitle.visibility = visibility
         recognizedTextConsoleText.visibility = visibility
         recognizedTextConsoleText.text = ScreenReaderController.getLastRecognizedText()
+    }
+
+    private fun applyLanguage(developerMode: Boolean) {
+        titleText.text = text("Screen Reader", "屏幕朗读")
+        subtitleText.text = text(
+            "Large controls only. Start the overlay, open a WeChat image, then tap the floating button to read text aloud.",
+            "操作很简单：先启动悬浮按钮，打开微信图片，再点击悬浮按钮朗读文字。"
+        )
+        overlayPermissionButton.text = text("Grant Overlay Permission", "授予悬浮窗权限")
+        accessibilityButton.text = text("Open Accessibility Settings", "打开无障碍设置")
+        batteryButton.text = text("Open Battery Settings", "打开电池设置")
+        startOverlayButton.text = text("Start Floating Button", "启动悬浮按钮")
+        stopOverlayButton.text = text("Stop Floating Button", "关闭悬浮按钮")
+        testReadButton.text = text("Test Chinese Speech", "测试中文朗读")
+        stopSpeechButton.text = text("Stop Speech", "停止朗读")
+        debugModeCheckBox.text = text("Debug OCR boxes after capture", "截图后显示 OCR 调试框")
+        saveDebugScreenshotsCheckBox.text = text("Save debug screenshots locally", "保存调试截图到本机")
+        recognizedTextConsoleCheckBox.text = text("Show recognized text in app", "在应用内显示识别文字")
+        highlightReadingLineCheckBox.text = text("Highlight line while reading", "朗读时高亮当前区域")
+        pauseResumeReadingCheckBox.text = text("Tap to pause and resume reading", "点击悬浮按钮暂停/继续朗读")
+        recognizedTextConsoleTitle.text = text("Recognized Text", "识别文字")
+        developerPasswordInput.hint = text("Password", "密码")
+        developerModeButton.text = if (developerMode) {
+            text("Turn Off Developer Mode", "关闭开发者模式")
+        } else {
+            text("Developer Mode", "开发者模式")
+        }
+        languageSwitchButton.text = if (AppPreferences.isChineseUiEnabled(this)) {
+            "Switch UI to English"
+        } else {
+            "切换界面为中文"
+        }
     }
 
     private fun updateDeveloperControlVisibility(developerMode: Boolean) {
@@ -214,11 +264,48 @@ class MainActivity : AppCompatActivity() {
         recognizedTextConsoleCheckBox.visibility = developerVisibility
         highlightReadingLineCheckBox.visibility = developerVisibility
         pauseResumeReadingCheckBox.visibility = developerVisibility
+        languageSwitchButton.visibility = developerVisibility
+        overlayPermissionButton.visibility = developerVisibility
+        accessibilityButton.visibility = developerVisibility
         batteryButton.visibility = developerVisibility
         testReadButton.visibility = developerVisibility
         stopSpeechButton.visibility = developerVisibility
         developerPasswordInput.visibility = if (developerMode) android.view.View.GONE else android.view.View.VISIBLE
-        developerModeButton.text = getString(R.string.developer_mode_button)
+    }
+
+    private fun text(english: String, chinese: String): String {
+        return if (AppPreferences.isChineseUiEnabled(this)) chinese else english
+    }
+
+    private fun onOffText(enabled: Boolean): String {
+        return if (enabled) text("On", "开") else text("Off", "关")
+    }
+
+    private fun readyText(enabled: Boolean): String {
+        return if (enabled) text("Ready", "已就绪") else text("Missing", "未授予")
+    }
+
+    private fun localizeStatus(status: String): String {
+        if (!AppPreferences.isChineseUiEnabled(this)) return status
+        return when {
+            status.startsWith("Ready.") -> "准备好了。请先授权并启动悬浮按钮，然后点击悬浮按钮朗读。"
+            status.startsWith("Floating button started") -> "悬浮按钮已启动。"
+            status.startsWith("Speech stopped") -> "朗读已停止。"
+            status.startsWith("Reading paused") -> "朗读已暂停。"
+            status.startsWith("Reading resumed") -> "继续朗读。"
+            status.startsWith("Reading halted") -> "朗读已终止。"
+            status.startsWith("Capturing screen") -> "正在截取屏幕..."
+            status.startsWith("Recognizing text") -> "正在识别文字..."
+            status.startsWith("Reading aloud") -> "正在朗读..."
+            status.startsWith("Ready for the next read") -> "已完成，可以再次朗读。"
+            status.startsWith("No text found") -> "没有识别到文字。"
+            status.startsWith("Accessibility connected") -> "无障碍服务已连接，可以开始测试。"
+            status.startsWith("Accessibility not connected") -> "无障碍服务未连接，请在无障碍设置中开启。"
+            status.startsWith("Overlay permission is missing") -> "缺少悬浮窗权限，请先授权。"
+            status.startsWith("Speech is not ready") -> "语音朗读还没准备好。"
+            status.startsWith("Playing demo speech") -> "正在播放测试语音。"
+            else -> status
+        }
     }
 
     private fun packageUri(): Uri = Uri.parse("package:$packageName")
