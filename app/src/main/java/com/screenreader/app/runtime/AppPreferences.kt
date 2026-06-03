@@ -10,6 +10,7 @@ object AppPreferences {
     private const val KEY_SHOW_RECOGNIZED_TEXT_CONSOLE = "show_recognized_text_console"
     private const val KEY_HIGHLIGHT_READING_LINE = "highlight_reading_line"
     private const val KEY_PAUSE_RESUME_READING = "pause_resume_reading"
+    private const val KEY_DEVELOPER_MODE = "developer_mode"
 
     fun isOcrDebugModeEnabled(context: Context): Boolean {
         return prefs(context).getBoolean(KEY_OCR_DEBUG_MODE, false)
@@ -49,6 +50,14 @@ object AppPreferences {
 
     fun setPauseResumeReadingEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_PAUSE_RESUME_READING, enabled).apply()
+    }
+
+    fun isDeveloperModeEnabled(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_DEVELOPER_MODE, false)
+    }
+
+    fun setDeveloperModeEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DEVELOPER_MODE, enabled).apply()
     }
 
     private fun prefs(context: Context) =

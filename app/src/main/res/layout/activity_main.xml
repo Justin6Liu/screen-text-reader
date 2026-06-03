@@ -49,6 +49,20 @@
             android:textColor="@color/textPrimary"
             android:textSize="16sp" />
 
+        <Button
+            android:id="@+id/startOverlayButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/start_overlay" />
+
+        <Button
+            android:id="@+id/stopOverlayButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/stop_overlay" />
+
         <CheckBox
             android:id="@+id/debugModeCheckBox"
             android:layout_width="match_parent"
@@ -116,20 +130,6 @@
             android:text="@string/open_battery_settings" />
 
         <Button
-            android:id="@+id/startOverlayButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/start_overlay" />
-
-        <Button
-            android:id="@+id/stopOverlayButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/stop_overlay" />
-
-        <Button
             android:id="@+id/testReadButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -165,5 +165,22 @@
             android:textIsSelectable="true"
             android:textSize="16sp"
             android:visibility="gone" />
+
+        <EditText
+            android:id="@+id/developerPasswordInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:hint="@string/developer_password_hint"
+            android:inputType="numberPassword"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/developerModeButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/developer_mode_button" />
     </LinearLayout>
 </ScrollView>

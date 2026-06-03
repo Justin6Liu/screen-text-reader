@@ -9,9 +9,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.CompoundButton
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +34,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stopOverlayButton: Button
     private lateinit var stopSpeechButton: Button
     private lateinit var testReadButton: Button
+    private lateinit var developerModeButton: Button
+    private lateinit var developerPasswordInput: EditText
     private lateinit var debugModeCheckBox: CheckBox
     private lateinit var saveDebugScreenshotsCheckBox: CheckBox
     private lateinit var recognizedTextConsoleCheckBox: CheckBox
@@ -58,6 +62,8 @@ class MainActivity : AppCompatActivity() {
         stopOverlayButton = findViewById(R.id.stopOverlayButton)
         stopSpeechButton = findViewById(R.id.stopSpeechButton)
         testReadButton = findViewById(R.id.testReadButton)
+        developerModeButton = findViewById(R.id.developerModeButton)
+        developerPasswordInput = findViewById(R.id.developerPasswordInput)
         debugModeCheckBox = findViewById(R.id.debugModeCheckBox)
         saveDebugScreenshotsCheckBox = findViewById(R.id.saveDebugScreenshotsCheckBox)
         recognizedTextConsoleCheckBox = findViewById(R.id.recognizedTextConsoleCheckBox)
@@ -95,6 +101,31 @@ class MainActivity : AppCompatActivity() {
         pauseResumeReadingCheckBox.isChecked = AppPreferences.isPauseResumeReadingEnabled(this)
         pauseResumeReadingCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
             AppPreferences.setPauseResumeReadingEnabled(this, isChecked)
+            refreshStatus()
+        }
+
+        developerModeButton.setOnClickListener {
+            if (AppPreferences.isDeveloperModeEnabled(this)) {
+                AppPreferences.setDeveloperModeEnabled(this, false)
+                developerPasswordInput.text.clear()
+                Toast.makeText(this, getString(R.string.developer_mode_off), Toast.LENGTH_SHORT).show()
+            } else {
+                val password = developerPasswordInput.text.toString()
+                if (password.isBlank()) {
+                    developerPasswordInput.requestFocus()
+                    val inputManager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    inputManager.showSoftInput(developerPasswordInput, InputMethodManager.SHOW_IMPLICIT)
+                    Toast.makeText(this, "Enter developer password.", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                if (password == DEVELOPER_PASSWORD) {
+                    AppPreferences.setDeveloperModeEnabled(this, true)
+                    developerPasswordInput.text.clear()
+                    Toast.makeText(this, getString(R.string.developer_mode_on), Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Incorrect password.", Toast.LENGTH_SHORT).show()
+                }
+            }
             refreshStatus()
         }
 
@@ -147,6 +178,7 @@ class MainActivity : AppCompatActivity() {
         val batteryIgnored = isIgnoringBatteryOptimizations()
         val accessibilityReady = ScreenReaderController.isAccessibilityReady()
         val overlayRunning = OverlayService.isRunning
+        val developerMode = AppPreferences.isDeveloperModeEnabled(this)
 
         statusText.text = buildString {
             appendLine(getString(R.string.status_title))
@@ -155,19 +187,38 @@ class MainActivity : AppCompatActivity() {
             appendLine("Accessibility service: ${if (accessibilityReady) "Connected" else "Not connected"}")
             appendLine("Overlay service: ${if (overlayRunning) "Running" else "Stopped"}")
             appendLine("Battery optimization: ${if (batteryIgnored) "Ignored" else "Default"}")
-            appendLine("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
-            appendLine("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
-            appendLine("Text console: ${if (AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity)) "On" else "Off"}")
-            appendLine("Reading line highlight: ${if (AppPreferences.isHighlightReadingLineEnabled(this@MainActivity)) "On" else "Off"}")
-            append("Tap pause/resume: ${if (AppPreferences.isPauseResumeReadingEnabled(this@MainActivity)) "On" else "Off"}")
+            append("Developer mode: ${if (developerMode) "On" else "Off"}")
+            if (developerMode) {
+                appendLine()
+                appendLine("OCR debug mode: ${if (AppPreferences.isOcrDebugModeEnabled(this@MainActivity)) "On" else "Off"}")
+                appendLine("Save debug screenshots: ${if (AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity)) "On" else "Off"}")
+                appendLine("Text console: ${if (AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity)) "On" else "Off"}")
+                appendLine("Reading line highlight: ${if (AppPreferences.isHighlightReadingLineEnabled(this@MainActivity)) "On" else "Off"}")
+                append("Tap pause/resume: ${if (AppPreferences.isPauseResumeReadingEnabled(this@MainActivity)) "On" else "Off"}")
+            }
         }
 
         speechStatusText.text = ScreenReaderController.getUiStatus()
-        val showConsole = AppPreferences.isRecognizedTextConsoleEnabled(this)
+        updateDeveloperControlVisibility(developerMode)
+        val showConsole = developerMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
         val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
         recognizedTextConsoleTitle.visibility = visibility
         recognizedTextConsoleText.visibility = visibility
         recognizedTextConsoleText.text = ScreenReaderController.getLastRecognizedText()
+    }
+
+    private fun updateDeveloperControlVisibility(developerMode: Boolean) {
+        val developerVisibility = if (developerMode) android.view.View.VISIBLE else android.view.View.GONE
+        debugModeCheckBox.visibility = developerVisibility
+        saveDebugScreenshotsCheckBox.visibility = developerVisibility
+        recognizedTextConsoleCheckBox.visibility = developerVisibility
+        highlightReadingLineCheckBox.visibility = developerVisibility
+        pauseResumeReadingCheckBox.visibility = developerVisibility
+        batteryButton.visibility = developerVisibility
+        testReadButton.visibility = developerVisibility
+        stopSpeechButton.visibility = developerVisibility
+        developerPasswordInput.visibility = if (developerMode) android.view.View.GONE else android.view.View.VISIBLE
+        developerModeButton.text = getString(R.string.developer_mode_button)
     }
 
     private fun packageUri(): Uri = Uri.parse("package:$packageName")
@@ -186,5 +237,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private companion object {
+        private const val DEVELOPER_PASSWORD = "12345678"
     }
 }
