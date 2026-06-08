@@ -152,13 +152,7 @@ object ScreenReaderController {
                 return
             }
             worker.execute {
-                val stitched = stitchVerticalCaptures(captures)
-                captures.forEach { capture ->
-                    if (capture !== stitched && !capture.isRecycled) {
-                        capture.recycle()
-                    }
-                }
-                recognizeAndRead(stitched)
+                recognizeScrollableCapturesAndRead(captures)
             }
         }
 
@@ -182,10 +176,9 @@ object ScreenReaderController {
                             if (!scrolled) {
                                 finishWithCaptures()
                             } else {
-                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                                    { captureStep(step + 1) },
-                                    AUTO_SCROLL_SETTLE_DELAY_MS
-                                )
+                                waitForScrollToSettle(service) {
+                                    captureStep(step + 1)
+                                }
                             }
                         }
                     }
@@ -196,6 +189,225 @@ object ScreenReaderController {
         }
 
         captureStep(0)
+    }
+
+    private fun recognizeScrollableCapturesAndRead(captures: List<Bitmap>) {
+        val ocr = ocrEngine
+        if (ocr == null) {
+            captures.recycleAll()
+            finishWithStatus("OCR engine unavailable.")
+            return
+        }
+
+        val outputs = mutableListOf<OcrOutput>()
+        captures.forEachIndexed { index, capture ->
+            updateStatus("Recognizing long image... ${index + 1}/${captures.size}")
+            maybeSaveDebugScreenshot(capture)
+            val result = ocr.recognize(capture)
+            if (!capture.isRecycled) {
+                capture.recycle()
+            }
+            result
+                .onSuccess { output ->
+                    if (output.text.isNotBlank()) {
+                        outputs += output
+                    }
+                }
+                .onFailure { error ->
+                    if (outputs.isEmpty()) {
+                        captures.recycleAll()
+                        finishWithStatus(error.message ?: "OCR failed.")
+                        return
+                    }
+                }
+        }
+
+        val output = combineScrollableOutputs(outputs)
+        updateRecognizedText(output.text)
+        if (output.text.isBlank()) {
+            finishWithStatus("No text found on screen.")
+            return
+        }
+
+        emitDebugSnapshot(null)
+        updateStatus("Reading aloud...")
+        val started = speakOcrOutput(output)
+        if (!started) {
+            finishWithStatus("Speech is not ready yet.")
+        }
+    }
+
+    private fun List<Bitmap>.recycleAll() {
+        forEach { bitmap ->
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+        }
+    }
+
+    private fun combineScrollableOutputs(outputs: List<OcrOutput>): OcrOutput {
+        if (outputs.isEmpty()) return OcrOutput("", null)
+
+        val acceptedSegments = mutableListOf<String>()
+        outputs.forEach { output ->
+            val incomingSegments = output.toScrollableSegmentTexts()
+            if (incomingSegments.isEmpty()) return@forEach
+
+            val overlapCount = findOverlappingSegmentCount(acceptedSegments, incomingSegments)
+            incomingSegments
+                .drop(overlapCount)
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .forEach { segment ->
+                    if (!acceptedSegments.hasRecentDuplicate(segment)) {
+                        acceptedSegments += segment
+                    }
+                }
+        }
+
+        val builder = StringBuilder()
+        val readSegments = mutableListOf<OcrReadSegment>()
+        acceptedSegments.forEach { segment ->
+            if (builder.isNotEmpty()) {
+                builder.append("\n\n")
+            }
+            val start = builder.length
+            builder.append(segment)
+            val end = builder.length
+            readSegments += OcrReadSegment(
+                text = segment,
+                bounds = Rect(0, 0, 0, 0),
+                startIndex = start,
+                endIndex = end
+            )
+        }
+
+        return OcrOutput(
+            text = builder.toString().trim(),
+            debugSnapshot = null,
+            readSegments = readSegments
+        )
+    }
+
+    private fun OcrOutput.toScrollableSegmentTexts(): List<String> {
+        val segments = readSegments
+            .map { it.text.trim() }
+            .filter { it.isNotBlank() }
+        if (segments.isNotEmpty()) return segments
+        return text.splitIntoScrollableSegments()
+    }
+
+    private fun String.splitIntoScrollableSegments(): List<String> {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        for (char in this) {
+            current.append(char)
+            val shouldBreak =
+                char in SCROLLABLE_TEXT_BREAK_CHARS ||
+                    current.length >= SCROLLABLE_FALLBACK_SEGMENT_CHARS
+            if (shouldBreak) {
+                current.toString().trim().takeIf { it.isNotBlank() }?.let { result += it }
+                current.clear()
+            }
+        }
+        current.toString().trim().takeIf { it.isNotBlank() }?.let { result += it }
+        return result
+    }
+
+    private fun findOverlappingSegmentCount(
+        existing: List<String>,
+        incoming: List<String>
+    ): Int {
+        if (existing.isEmpty() || incoming.isEmpty()) return 0
+
+        val maxOverlap = minOf(
+            SCROLLABLE_MAX_OVERLAP_SEGMENTS,
+            existing.size,
+            incoming.size
+        )
+        for (count in maxOverlap downTo 1) {
+            val existingText = existing.takeLast(count).joinToString(separator = "")
+            val incomingText = incoming.take(count).joinToString(separator = "")
+            if (existingText.scrollableSimilarity(incomingText) >= SCROLLABLE_OVERLAP_SIMILARITY) {
+                return count
+            }
+        }
+        return 0
+    }
+
+    private fun List<String>.hasRecentDuplicate(segment: String): Boolean {
+        return takeLast(SCROLLABLE_RECENT_DUPLICATE_LOOKBACK).any { recent ->
+            recent.scrollableSimilarity(segment) >= SCROLLABLE_DUPLICATE_SIMILARITY
+        }
+    }
+
+    private fun String.scrollableSimilarity(other: String): Double {
+        val first = normalizedForScrollableMerge()
+        val second = other.normalizedForScrollableMerge()
+        if (first.isEmpty() || second.isEmpty()) return 0.0
+        if (first == second) return 1.0
+
+        val shorter = minOf(first.length, second.length)
+        val longer = maxOf(first.length, second.length)
+        if (shorter < SCROLLABLE_SHORT_TEXT_LENGTH) {
+            return if (first.contains(second) || second.contains(first)) {
+                shorter.toDouble() / longer.toDouble()
+            } else {
+                0.0
+            }
+        }
+
+        val firstBigrams = first.charBigrams()
+        val secondBigrams = second.charBigrams()
+        var overlap = 0
+        firstBigrams.forEach { (bigram, count) ->
+            val secondCount = secondBigrams[bigram] ?: 0
+            overlap += minOf(count, secondCount)
+        }
+
+        val total = firstBigrams.values.sum() + secondBigrams.values.sum()
+        return if (total == 0) 0.0 else (2.0 * overlap.toDouble()) / total.toDouble()
+    }
+
+    private fun String.normalizedForScrollableMerge(): String {
+        return buildString {
+            this@normalizedForScrollableMerge.forEach { char ->
+                if (char.isLetterOrDigit() || char.code in CJK_UNIFIED_IDEOGRAPHS) {
+                    append(char.lowercaseChar())
+                }
+            }
+        }
+    }
+
+    private fun String.charBigrams(): Map<String, Int> {
+        if (length < 2) return mapOf(this to 1)
+        val counts = mutableMapOf<String, Int>()
+        for (index in 0 until length - 1) {
+            val bigram = substring(index, index + 2)
+            counts[bigram] = (counts[bigram] ?: 0) + 1
+        }
+        return counts
+    }
+
+    private fun waitForScrollToSettle(
+        service: ReaderAccessibilityService,
+        onSettled: () -> Unit
+    ) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val startTimeMs = android.os.SystemClock.uptimeMillis()
+
+        fun check() {
+            val elapsedMs = android.os.SystemClock.uptimeMillis() - startTimeMs
+            val quietLongEnough = service.millisSinceLastScrollEvent() >= AUTO_SCROLL_QUIET_WINDOW_MS
+            val waitedMinimum = elapsedMs >= AUTO_SCROLL_MIN_SETTLE_DELAY_MS
+            if ((quietLongEnough && waitedMinimum) || elapsedMs >= AUTO_SCROLL_MAX_SETTLE_DELAY_MS) {
+                onSettled()
+            } else {
+                handler.postDelayed({ check() }, AUTO_SCROLL_SETTLE_POLL_INTERVAL_MS)
+            }
+        }
+
+        handler.postDelayed({ check() }, AUTO_SCROLL_SETTLE_POLL_INTERVAL_MS)
     }
 
     private fun recognizeAndRead(bitmap: Bitmap) {
@@ -628,8 +840,14 @@ object ScreenReaderController {
         }
     }
 
+    private val SCROLLABLE_TEXT_BREAK_CHARS = setOf('。', '！', '？', '.', '!', '?', '；', ';')
+    private val CJK_UNIFIED_IDEOGRAPHS = 0x4E00..0x9FFF
+
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
-    private const val AUTO_SCROLL_SETTLE_DELAY_MS = 700L
+    private const val AUTO_SCROLL_MIN_SETTLE_DELAY_MS = 500L
+    private const val AUTO_SCROLL_QUIET_WINDOW_MS = 500L
+    private const val AUTO_SCROLL_MAX_SETTLE_DELAY_MS = 2200L
+    private const val AUTO_SCROLL_SETTLE_POLL_INTERVAL_MS = 100L
     private const val FALLBACK_AUTO_SCROLL_OVERLAP_RATIO = 0.35f
     private const val MIN_AUTO_SCROLL_OVERLAP_RATIO = 0.18f
     private const val MAX_AUTO_SCROLL_OVERLAP_RATIO = 0.82f
@@ -643,4 +861,10 @@ object ScreenReaderController {
     private const val OVERLAP_MATCH_SCORE_THRESHOLD = 0.42
     private const val SCREEN_COMPARE_GRID = 8
     private const val SCREEN_SIMILARITY_THRESHOLD = 2.5
+    private const val SCROLLABLE_FALLBACK_SEGMENT_CHARS = 70
+    private const val SCROLLABLE_MAX_OVERLAP_SEGMENTS = 8
+    private const val SCROLLABLE_RECENT_DUPLICATE_LOOKBACK = 12
+    private const val SCROLLABLE_OVERLAP_SIMILARITY = 0.74
+    private const val SCROLLABLE_DUPLICATE_SIMILARITY = 0.88
+    private const val SCROLLABLE_SHORT_TEXT_LENGTH = 8
 }

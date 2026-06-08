@@ -11,12 +11,16 @@ import android.graphics.ColorSpace
 import android.graphics.Path
 import android.hardware.HardwareBuffer
 import android.os.Build
+import android.os.SystemClock
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import androidx.annotation.RequiresApi
 import com.screenreader.app.runtime.ScreenReaderController
 
 class ReaderAccessibilityService : AccessibilityService() {
+
+    @Volatile
+    private var lastScrollEventTimeMs: Long = 0L
 
     override fun onServiceConnected() {
         instance = this
@@ -28,7 +32,11 @@ class ReaderAccessibilityService : AccessibilityService() {
         ScreenReaderController.onAccessibilityAvailabilityChanged(true)
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            lastScrollEventTimeMs = SystemClock.uptimeMillis()
+        }
+    }
 
     override fun onInterrupt() = Unit
 
@@ -52,8 +60,8 @@ class ReaderAccessibilityService : AccessibilityService() {
     fun swipeUpForMoreContent(onResult: (Boolean) -> Unit) {
         val metrics = resources.displayMetrics
         val centerX = metrics.widthPixels / 2f
-        val startY = metrics.heightPixels * 0.78f
-        val endY = metrics.heightPixels * 0.28f
+        val startY = metrics.heightPixels * SCROLL_START_Y_RATIO
+        val endY = metrics.heightPixels * SCROLL_END_Y_RATIO
         val path = Path().apply {
             moveTo(centerX, startY)
             lineTo(centerX, endY)
@@ -78,6 +86,12 @@ class ReaderAccessibilityService : AccessibilityService() {
         if (!dispatched) {
             onResult(false)
         }
+    }
+
+    fun millisSinceLastScrollEvent(): Long {
+        val lastEventTime = lastScrollEventTimeMs
+        if (lastEventTime == 0L) return Long.MAX_VALUE
+        return SystemClock.uptimeMillis() - lastEventTime
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
@@ -116,6 +130,8 @@ class ReaderAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val SCROLL_GESTURE_DURATION_MS = 420L
+        private const val SCROLL_START_Y_RATIO = 0.76f
+        private const val SCROLL_END_Y_RATIO = 0.36f
 
         @Volatile
         private var instance: ReaderAccessibilityService? = null
