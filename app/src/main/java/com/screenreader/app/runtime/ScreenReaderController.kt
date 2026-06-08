@@ -228,18 +228,18 @@ object ScreenReaderController {
         if (captures.size == 1) return captures.first()
 
         val targetWidth = captures.minOf { it.width }
-        val overlap = (captures.first().height * AUTO_SCROLL_OVERLAP_RATIO).toInt()
-            .coerceAtLeast(0)
-            .coerceAtMost(captures.first().height / 2)
+        val overlaps = captures.zipWithNext { previous, next ->
+            findVerticalOverlap(previous, next, targetWidth)
+        }
         val totalHeight = captures.withIndex().sumOf { (index, bitmap) ->
-            if (index == 0) bitmap.height else (bitmap.height - overlap).coerceAtLeast(1)
+            if (index == 0) bitmap.height else (bitmap.height - overlaps[index - 1]).coerceAtLeast(1)
         }
 
         val stitched = Bitmap.createBitmap(targetWidth, totalHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(stitched)
         var top = 0
         captures.forEachIndexed { index, bitmap ->
-            val sourceTop = if (index == 0) 0 else overlap
+            val sourceTop = if (index == 0) 0 else overlaps[index - 1]
             val source = Rect(0, sourceTop, targetWidth.coerceAtMost(bitmap.width), bitmap.height)
             val height = source.height()
             val destination = Rect(0, top, targetWidth, top + height)
@@ -247,6 +247,88 @@ object ScreenReaderController {
             top += height
         }
         return stitched
+    }
+
+    private fun findVerticalOverlap(previous: Bitmap, next: Bitmap, targetWidth: Int): Int {
+        val comparableHeight = minOf(previous.height, next.height)
+        val minOverlap = (comparableHeight * MIN_AUTO_SCROLL_OVERLAP_RATIO).toInt().coerceAtLeast(1)
+        val maxOverlap = (comparableHeight * MAX_AUTO_SCROLL_OVERLAP_RATIO).toInt()
+            .coerceAtLeast(minOverlap)
+            .coerceAtMost(comparableHeight - 1)
+        val fallbackOverlap = (comparableHeight * FALLBACK_AUTO_SCROLL_OVERLAP_RATIO).toInt()
+            .coerceIn(minOverlap, maxOverlap)
+
+        var bestOverlap = fallbackOverlap
+        var bestScore = Double.MAX_VALUE
+        var overlap = minOverlap
+        while (overlap <= maxOverlap) {
+            val score = overlapInkDifferenceScore(previous, next, targetWidth, overlap)
+            if (score.isUsable && score.difference < bestScore) {
+                bestScore = score.difference
+                bestOverlap = overlap
+            }
+            overlap += OVERLAP_SEARCH_STEP_PX
+        }
+
+        if (bestScore == Double.MAX_VALUE) return fallbackOverlap
+
+        val refinedMin = (bestOverlap - OVERLAP_SEARCH_STEP_PX).coerceAtLeast(minOverlap)
+        val refinedMax = (bestOverlap + OVERLAP_SEARCH_STEP_PX).coerceAtMost(maxOverlap)
+        var refinedOverlap = refinedMin
+        while (refinedOverlap <= refinedMax) {
+            val score = overlapInkDifferenceScore(previous, next, targetWidth, refinedOverlap)
+            if (score.isUsable && score.difference < bestScore) {
+                bestScore = score.difference
+                bestOverlap = refinedOverlap
+            }
+            refinedOverlap += OVERLAP_REFINE_STEP_PX
+        }
+
+        return if (bestScore <= OVERLAP_MATCH_SCORE_THRESHOLD) bestOverlap else fallbackOverlap
+    }
+
+    private fun overlapInkDifferenceScore(
+        previous: Bitmap,
+        next: Bitmap,
+        targetWidth: Int,
+        overlap: Int
+    ): OverlapScore {
+        val width = targetWidth.coerceAtMost(previous.width).coerceAtMost(next.width)
+        if (width <= 0 || overlap <= 0) return OverlapScore.unusable()
+
+        val left = (width * OVERLAP_HORIZONTAL_MARGIN_RATIO).toInt().coerceIn(0, width - 1)
+        val right = (width * (1f - OVERLAP_HORIZONTAL_MARGIN_RATIO)).toInt().coerceIn(left + 1, width)
+        val sampleWidth = right - left
+
+        var weightedDifference = 0.0
+        var totalInformation = 0.0
+        for (yIndex in 0 until OVERLAP_SAMPLE_ROWS) {
+            val relativeY = ((yIndex + 0.5f) * overlap / OVERLAP_SAMPLE_ROWS).toInt()
+                .coerceIn(0, overlap - 1)
+            val previousY = (previous.height - overlap + relativeY).coerceIn(0, previous.height - 1)
+            val nextY = relativeY.coerceIn(0, next.height - 1)
+            for (xIndex in 0 until OVERLAP_SAMPLE_COLUMNS) {
+                val x = (left + ((xIndex + 0.5f) * sampleWidth / OVERLAP_SAMPLE_COLUMNS)).toInt()
+                    .coerceIn(left, right - 1)
+                val first = previous.getPixel(x, previousY)
+                val second = next.getPixel(x, nextY)
+                val previousInk = first.inkAmount()
+                val nextInk = second.inkAmount()
+                val information = maxOf(previousInk, nextInk)
+                weightedDifference += kotlin.math.abs(previousInk - nextInk) * (1.0 + information / 255.0)
+                totalInformation += information
+            }
+        }
+
+        if (totalInformation < MIN_OVERLAP_INK_INFORMATION) {
+            return OverlapScore.unusable()
+        }
+        return OverlapScore(weightedDifference / totalInformation, isUsable = true)
+    }
+
+    private fun Int.inkAmount(): Double {
+        val luminance = (0.299 * Color.red(this)) + (0.587 * Color.green(this)) + (0.114 * Color.blue(this))
+        return (INK_BACKGROUND_LUMINANCE - luminance).coerceAtLeast(0.0)
     }
 
     private fun Bitmap.isVisuallySimilarTo(other: Bitmap): Boolean {
@@ -537,9 +619,28 @@ object ScreenReaderController {
         @Volatile var currentSegmentIndex: Int = 0
     )
 
+    private data class OverlapScore(
+        val difference: Double,
+        val isUsable: Boolean
+    ) {
+        companion object {
+            fun unusable(): OverlapScore = OverlapScore(Double.MAX_VALUE, isUsable = false)
+        }
+    }
+
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
     private const val AUTO_SCROLL_SETTLE_DELAY_MS = 700L
-    private const val AUTO_SCROLL_OVERLAP_RATIO = 0.22f
+    private const val FALLBACK_AUTO_SCROLL_OVERLAP_RATIO = 0.35f
+    private const val MIN_AUTO_SCROLL_OVERLAP_RATIO = 0.18f
+    private const val MAX_AUTO_SCROLL_OVERLAP_RATIO = 0.82f
+    private const val OVERLAP_SEARCH_STEP_PX = 32
+    private const val OVERLAP_REFINE_STEP_PX = 4
+    private const val OVERLAP_SAMPLE_ROWS = 28
+    private const val OVERLAP_SAMPLE_COLUMNS = 32
+    private const val OVERLAP_HORIZONTAL_MARGIN_RATIO = 0.06f
+    private const val INK_BACKGROUND_LUMINANCE = 245.0
+    private const val MIN_OVERLAP_INK_INFORMATION = 160.0
+    private const val OVERLAP_MATCH_SCORE_THRESHOLD = 0.42
     private const val SCREEN_COMPARE_GRID = 8
     private const val SCREEN_SIMILARITY_THRESHOLD = 2.5
 }
