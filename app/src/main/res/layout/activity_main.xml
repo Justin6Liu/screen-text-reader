@@ -108,6 +108,25 @@
             android:textColor="@color/textPrimary"
             android:textSize="16sp" />
 
+        <CheckBox
+            android:id="@+id/autoScrollCaptureCheckBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Auto scroll capture"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/autoScrollMaxCapturesInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Max captures"
+            android:inputType="number"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
         <Button
             android:id="@+id/languageSwitchButton"
             android:layout_width="match_parent"

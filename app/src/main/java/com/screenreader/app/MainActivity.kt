@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.CheckBox
@@ -44,6 +46,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var recognizedTextConsoleCheckBox: CheckBox
     private lateinit var highlightReadingLineCheckBox: CheckBox
     private lateinit var pauseResumeReadingCheckBox: CheckBox
+    private lateinit var autoScrollCaptureCheckBox: CheckBox
+    private lateinit var autoScrollMaxCapturesInput: EditText
     private lateinit var recognizedTextConsoleTitle: TextView
     private lateinit var recognizedTextConsoleText: TextView
 
@@ -75,6 +79,8 @@ class MainActivity : AppCompatActivity() {
         recognizedTextConsoleCheckBox = findViewById(R.id.recognizedTextConsoleCheckBox)
         highlightReadingLineCheckBox = findViewById(R.id.highlightReadingLineCheckBox)
         pauseResumeReadingCheckBox = findViewById(R.id.pauseResumeReadingCheckBox)
+        autoScrollCaptureCheckBox = findViewById(R.id.autoScrollCaptureCheckBox)
+        autoScrollMaxCapturesInput = findViewById(R.id.autoScrollMaxCapturesInput)
         recognizedTextConsoleTitle = findViewById(R.id.recognizedTextConsoleTitle)
         recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
 
@@ -109,6 +115,24 @@ class MainActivity : AppCompatActivity() {
             AppPreferences.setPauseResumeReadingEnabled(this, isChecked)
             refreshStatus()
         }
+
+        autoScrollCaptureCheckBox.isChecked = AppPreferences.isAutoScrollCaptureEnabled(this)
+        autoScrollCaptureCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            AppPreferences.setAutoScrollCaptureEnabled(this, isChecked)
+            refreshStatus()
+        }
+
+        autoScrollMaxCapturesInput.setText(AppPreferences.getAutoScrollMaxCaptures(this).toString())
+        autoScrollMaxCapturesInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val value = s?.toString()?.toIntOrNull() ?: return
+                AppPreferences.setAutoScrollMaxCaptures(this@MainActivity, value)
+            }
+
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
 
         developerModeButton.setOnClickListener {
             if (AppPreferences.isDeveloperModeEnabled(this)) {
@@ -212,7 +236,9 @@ class MainActivity : AppCompatActivity() {
                 appendLine("${text("Save debug screenshots", "保存调试截图")}: ${onOffText(AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity))}")
                 appendLine("${text("Text console", "识别文字显示")}: ${onOffText(AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity))}")
                 appendLine("${text("Reading highlight", "朗读高亮")}: ${onOffText(AppPreferences.isHighlightReadingLineEnabled(this@MainActivity))}")
-                append("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
+                appendLine("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
+                appendLine("${text("Auto scroll capture", "自动滚动整图识别")}: ${onOffText(AppPreferences.isAutoScrollCaptureEnabled(this@MainActivity))}")
+                append("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
             }
         }
 
@@ -243,6 +269,8 @@ class MainActivity : AppCompatActivity() {
         recognizedTextConsoleCheckBox.text = text("Show recognized text in app", "在应用内显示识别文字")
         highlightReadingLineCheckBox.text = text("Highlight line while reading", "朗读时高亮当前区域")
         pauseResumeReadingCheckBox.text = text("Tap to pause and resume reading", "点击悬浮按钮暂停/继续朗读")
+        autoScrollCaptureCheckBox.text = text("Auto scroll capture full image", "自动滚动识别长图")
+        autoScrollMaxCapturesInput.hint = text("Max captures 1-15", "最大截图次数 1-15")
         recognizedTextConsoleTitle.text = text("Recognized Text", "识别文字")
         developerPasswordInput.hint = text("Password", "密码")
         developerModeButton.text = if (developerMode) {
@@ -264,6 +292,8 @@ class MainActivity : AppCompatActivity() {
         recognizedTextConsoleCheckBox.visibility = developerVisibility
         highlightReadingLineCheckBox.visibility = developerVisibility
         pauseResumeReadingCheckBox.visibility = developerVisibility
+        autoScrollCaptureCheckBox.visibility = developerVisibility
+        autoScrollMaxCapturesInput.visibility = developerVisibility
         languageSwitchButton.visibility = developerVisibility
         overlayPermissionButton.visibility = developerVisibility
         accessibilityButton.visibility = developerVisibility

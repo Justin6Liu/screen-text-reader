@@ -1,6 +1,10 @@
 package com.screenreader.app.runtime
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Rect
 import com.screenreader.app.ocr.OcrDebugSnapshot
 import com.screenreader.app.accessibility.ReaderAccessibilityService
 import com.screenreader.app.ocr.OcrOutput
@@ -109,39 +113,164 @@ object ScreenReaderController {
 
         updateState(ReaderState.PROCESSING)
         emitDebugSnapshot(null)
-        updateStatus("Capturing screen...")
+        updateStatus(
+            if (appContext?.let { AppPreferences.isAutoScrollCaptureEnabled(it) } == true) {
+                "Capturing long image..."
+            } else {
+                "Capturing screen..."
+            }
+        )
         prepareOverlaysForCapture {
-            service.captureScreen { captureResult ->
-                restoreOverlaysAfterCapture()
-                captureResult.onSuccess { bitmap ->
-                    worker.execute {
-                        maybeSaveDebugScreenshot(bitmap)
-                        updateStatus("Recognizing text...")
-                        val result = ocrEngine?.recognize(bitmap)
-                        bitmap.recycle()
-                        result
-                            ?.onSuccess { output ->
-                                maybeEmitDebugSnapshot(output.debugSnapshot)
-                                updateRecognizedText(output.text)
-                                if (output.text.isBlank()) {
-                                    finishWithStatus("No text found on screen.")
-                                } else {
-                                    updateStatus("Reading aloud...")
-                                    val started = speakOcrOutput(output)
-                                    if (!started) {
-                                        finishWithStatus("Speech is not ready yet.")
-                                    }
-                                }
-                            }
-                            ?.onFailure { error ->
-                                finishWithStatus(error.message ?: "OCR failed.")
-                            } ?: finishWithStatus("OCR engine unavailable.")
-                    }
-                }.onFailure { error ->
-                    finishWithStatus(error.message ?: "Screen capture failed.")
-                }
+            val context = appContext
+            if (context != null && AppPreferences.isAutoScrollCaptureEnabled(context)) {
+                captureScrollableAndRead(service)
+            } else {
+                captureSingleAndRead(service)
             }
         }
+    }
+
+    private fun captureSingleAndRead(service: ReaderAccessibilityService) {
+        service.captureScreen { captureResult ->
+            restoreOverlaysAfterCapture()
+            captureResult
+                .onSuccess { bitmap -> recognizeAndRead(bitmap) }
+                .onFailure { error -> finishWithStatus(error.message ?: "Screen capture failed.") }
+        }
+    }
+
+    private fun captureScrollableAndRead(service: ReaderAccessibilityService) {
+        val captures = mutableListOf<Bitmap>()
+        val maxCaptures = appContext
+            ?.let { AppPreferences.getAutoScrollMaxCaptures(it) }
+            ?: AppPreferences.DEFAULT_AUTO_SCROLL_MAX_CAPTURES
+
+        fun finishWithCaptures() {
+            restoreOverlaysAfterCapture()
+            if (captures.isEmpty()) {
+                finishWithStatus("Screen capture failed.")
+                return
+            }
+            worker.execute {
+                val stitched = stitchVerticalCaptures(captures)
+                captures.forEach { capture ->
+                    if (capture !== stitched && !capture.isRecycled) {
+                        capture.recycle()
+                    }
+                }
+                recognizeAndRead(stitched)
+            }
+        }
+
+        fun captureStep(step: Int) {
+            updateStatus("Capturing long image... ${step + 1}/$maxCaptures")
+            service.captureScreen { captureResult ->
+                captureResult
+                    .onSuccess { bitmap ->
+                        val previous = captures.lastOrNull()
+                        if (previous != null && bitmap.isVisuallySimilarTo(previous)) {
+                            bitmap.recycle()
+                            finishWithCaptures()
+                            return@onSuccess
+                        }
+                        captures += bitmap
+                        if (captures.size >= maxCaptures) {
+                            finishWithCaptures()
+                            return@onSuccess
+                        }
+                        service.swipeUpForMoreContent { scrolled ->
+                            if (!scrolled) {
+                                finishWithCaptures()
+                            } else {
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                                    { captureStep(step + 1) },
+                                    AUTO_SCROLL_SETTLE_DELAY_MS
+                                )
+                            }
+                        }
+                    }
+                    .onFailure {
+                        finishWithCaptures()
+                    }
+            }
+        }
+
+        captureStep(0)
+    }
+
+    private fun recognizeAndRead(bitmap: Bitmap) {
+        worker.execute {
+            maybeSaveDebugScreenshot(bitmap)
+            updateStatus("Recognizing text...")
+            val result = ocrEngine?.recognize(bitmap)
+            bitmap.recycle()
+            result
+                ?.onSuccess { output ->
+                    maybeEmitDebugSnapshot(output.debugSnapshot)
+                    updateRecognizedText(output.text)
+                    if (output.text.isBlank()) {
+                        finishWithStatus("No text found on screen.")
+                    } else {
+                        updateStatus("Reading aloud...")
+                        val started = speakOcrOutput(output)
+                        if (!started) {
+                            finishWithStatus("Speech is not ready yet.")
+                        }
+                    }
+                }
+                ?.onFailure { error ->
+                    finishWithStatus(error.message ?: "OCR failed.")
+                } ?: finishWithStatus("OCR engine unavailable.")
+        }
+    }
+
+    private fun stitchVerticalCaptures(captures: List<Bitmap>): Bitmap {
+        if (captures.size == 1) return captures.first()
+
+        val targetWidth = captures.minOf { it.width }
+        val overlap = (captures.first().height * AUTO_SCROLL_OVERLAP_RATIO).toInt()
+            .coerceAtLeast(0)
+            .coerceAtMost(captures.first().height / 2)
+        val totalHeight = captures.withIndex().sumOf { (index, bitmap) ->
+            if (index == 0) bitmap.height else (bitmap.height - overlap).coerceAtLeast(1)
+        }
+
+        val stitched = Bitmap.createBitmap(targetWidth, totalHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(stitched)
+        var top = 0
+        captures.forEachIndexed { index, bitmap ->
+            val sourceTop = if (index == 0) 0 else overlap
+            val source = Rect(0, sourceTop, targetWidth.coerceAtMost(bitmap.width), bitmap.height)
+            val height = source.height()
+            val destination = Rect(0, top, targetWidth, top + height)
+            canvas.drawBitmap(bitmap, source, destination, null)
+            top += height
+        }
+        return stitched
+    }
+
+    private fun Bitmap.isVisuallySimilarTo(other: Bitmap): Boolean {
+        val width = minOf(width, other.width)
+        val height = minOf(height, other.height)
+        if (width <= 0 || height <= 0) return false
+
+        var totalDifference = 0L
+        var samples = 0
+        for (yIndex in 0 until SCREEN_COMPARE_GRID) {
+            val y = ((yIndex + 0.5f) * height / SCREEN_COMPARE_GRID).toInt().coerceIn(0, height - 1)
+            for (xIndex in 0 until SCREEN_COMPARE_GRID) {
+                val x = ((xIndex + 0.5f) * width / SCREEN_COMPARE_GRID).toInt().coerceIn(0, width - 1)
+                val first = getPixel(x, y)
+                val second = other.getPixel(x, y)
+                totalDifference += kotlin.math.abs(Color.red(first) - Color.red(second))
+                totalDifference += kotlin.math.abs(Color.green(first) - Color.green(second))
+                totalDifference += kotlin.math.abs(Color.blue(first) - Color.blue(second))
+                samples += 3
+            }
+        }
+
+        val averageDifference = totalDifference.toDouble() / samples.toDouble()
+        return averageDifference < SCREEN_SIMILARITY_THRESHOLD
     }
 
     fun stopSpeaking() {
@@ -301,6 +430,7 @@ object ScreenReaderController {
     private fun emitReadingHighlight(output: OcrOutput, start: Int, end: Int) {
         val context = appContext ?: return
         if (!AppPreferences.isHighlightReadingLineEnabled(context)) return
+        if (AppPreferences.isAutoScrollCaptureEnabled(context)) return
 
         val baseSnapshot = output.debugSnapshot ?: return
         val activeSegment = output.readSegments.findBestSegment(start, end) ?: return
@@ -321,6 +451,7 @@ object ScreenReaderController {
     private fun emitReadingHighlight(output: OcrOutput, activeSegment: OcrReadSegment) {
         val context = appContext ?: return
         if (!AppPreferences.isHighlightReadingLineEnabled(context)) return
+        if (AppPreferences.isAutoScrollCaptureEnabled(context)) return
 
         val baseSnapshot = output.debugSnapshot ?: return
         val includeDebugBoxes = AppPreferences.isOcrDebugModeEnabled(context)
@@ -407,4 +538,8 @@ object ScreenReaderController {
     )
 
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
+    private const val AUTO_SCROLL_SETTLE_DELAY_MS = 700L
+    private const val AUTO_SCROLL_OVERLAP_RATIO = 0.22f
+    private const val SCREEN_COMPARE_GRID = 8
+    private const val SCREEN_SIMILARITY_THRESHOLD = 2.5
 }

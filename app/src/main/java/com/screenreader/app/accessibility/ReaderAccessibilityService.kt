@@ -1,12 +1,14 @@
 package com.screenreader.app.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
 import android.graphics.Bitmap
 import android.graphics.Bitmap.Config.ARGB_8888
 import android.graphics.ColorSpace
+import android.graphics.Path
 import android.hardware.HardwareBuffer
 import android.os.Build
 import android.view.Display
@@ -47,6 +49,37 @@ class ReaderAccessibilityService : AccessibilityService() {
         takeScreenshotCompat(onResult)
     }
 
+    fun swipeUpForMoreContent(onResult: (Boolean) -> Unit) {
+        val metrics = resources.displayMetrics
+        val centerX = metrics.widthPixels / 2f
+        val startY = metrics.heightPixels * 0.78f
+        val endY = metrics.heightPixels * 0.28f
+        val path = Path().apply {
+            moveTo(centerX, startY)
+            lineTo(centerX, endY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, SCROLL_GESTURE_DURATION_MS))
+            .build()
+
+        val dispatched = dispatchGesture(
+            gesture,
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    onResult(true)
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    onResult(false)
+                }
+            },
+            null
+        )
+        if (!dispatched) {
+            onResult(false)
+        }
+    }
+
     @RequiresApi(Build.VERSION_CODES.R)
     private fun takeScreenshotCompat(onResult: (Result<Bitmap>) -> Unit) {
         takeScreenshot(
@@ -82,6 +115,8 @@ class ReaderAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        private const val SCROLL_GESTURE_DURATION_MS = 420L
+
         @Volatile
         private var instance: ReaderAccessibilityService? = null
 
