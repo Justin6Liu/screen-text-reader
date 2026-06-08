@@ -199,7 +199,7 @@ object ScreenReaderController {
             return
         }
 
-        val outputs = mutableListOf<OcrOutput>()
+        val outputs = mutableListOf<ScrollableOcrOutput>()
         captures.forEachIndexed { index, capture ->
             updateStatus("Recognizing long image... ${index + 1}/${captures.size}")
             maybeSaveDebugScreenshot(capture)
@@ -210,7 +210,11 @@ object ScreenReaderController {
             result
                 .onSuccess { output ->
                     if (output.text.isNotBlank()) {
-                        outputs += output
+                        outputs += ScrollableOcrOutput(
+                            output = output,
+                            captureIndex = index,
+                            captureCount = captures.size
+                        )
                     }
                 }
                 .onFailure { error ->
@@ -245,12 +249,15 @@ object ScreenReaderController {
         }
     }
 
-    private fun combineScrollableOutputs(outputs: List<OcrOutput>): OcrOutput {
+    private fun combineScrollableOutputs(outputs: List<ScrollableOcrOutput>): OcrOutput {
         if (outputs.isEmpty()) return OcrOutput("", null)
 
         val acceptedSegments = mutableListOf<String>()
-        outputs.forEach { output ->
-            val incomingSegments = output.toScrollableSegmentTexts()
+        outputs.forEach { item ->
+            val incomingSegments = item.output.toScrollableSegmentTexts(
+                captureIndex = item.captureIndex,
+                captureCount = item.captureCount
+            )
             if (incomingSegments.isEmpty()) return@forEach
 
             val overlapCount = findOverlappingSegmentCount(acceptedSegments, incomingSegments)
@@ -289,12 +296,38 @@ object ScreenReaderController {
         )
     }
 
-    private fun OcrOutput.toScrollableSegmentTexts(): List<String> {
+    private fun OcrOutput.toScrollableSegmentTexts(
+        captureIndex: Int,
+        captureCount: Int
+    ): List<String> {
+        val safeBounds = scrollableSafeVerticalBounds(captureIndex, captureCount)
         val segments = readSegments
+            .filter { segment -> segment.isInsideScrollableSafeZone(safeBounds) }
             .map { it.text.trim() }
             .filter { it.isNotBlank() }
         if (segments.isNotEmpty()) return segments
-        return text.splitIntoScrollableSegments()
+        return if (safeBounds == null) text.splitIntoScrollableSegments() else emptyList()
+    }
+
+    private fun OcrOutput.scrollableSafeVerticalBounds(
+        captureIndex: Int,
+        captureCount: Int
+    ): IntRange? {
+        val imageHeight = debugSnapshot?.imageHeight ?: return null
+        if (imageHeight <= 0 || captureCount <= 1) return null
+
+        val edgeInset = (imageHeight * SCROLLABLE_SAFE_EDGE_RATIO).toInt()
+            .coerceAtLeast(SCROLLABLE_SAFE_EDGE_MIN_PX)
+        val top = if (captureIndex == 0) 0 else edgeInset
+        val bottom = if (captureIndex == captureCount - 1) imageHeight else imageHeight - edgeInset
+        return top..bottom.coerceAtLeast(top)
+    }
+
+    private fun OcrReadSegment.isInsideScrollableSafeZone(safeBounds: IntRange?): Boolean {
+        if (safeBounds == null) return true
+        if (bounds.isEmpty()) return false
+        val centerY = bounds.centerY()
+        return centerY in safeBounds
     }
 
     private fun String.splitIntoScrollableSegments(): List<String> {
@@ -831,6 +864,12 @@ object ScreenReaderController {
         @Volatile var currentSegmentIndex: Int = 0
     )
 
+    private data class ScrollableOcrOutput(
+        val output: OcrOutput,
+        val captureIndex: Int,
+        val captureCount: Int
+    )
+
     private data class OverlapScore(
         val difference: Double,
         val isUsable: Boolean
@@ -867,4 +906,6 @@ object ScreenReaderController {
     private const val SCROLLABLE_OVERLAP_SIMILARITY = 0.74
     private const val SCROLLABLE_DUPLICATE_SIMILARITY = 0.88
     private const val SCROLLABLE_SHORT_TEXT_LENGTH = 8
+    private const val SCROLLABLE_SAFE_EDGE_RATIO = 0.12f
+    private const val SCROLLABLE_SAFE_EDGE_MIN_PX = 120
 }

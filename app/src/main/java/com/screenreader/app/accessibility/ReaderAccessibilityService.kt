@@ -130,8 +130,8 @@ class ReaderAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val SCROLL_GESTURE_DURATION_MS = 420L
-        private const val SCROLL_START_Y_RATIO = 0.76f
-        private const val SCROLL_END_Y_RATIO = 0.36f
+        private const val SCROLL_START_Y_RATIO = 0.72f
+        private const val SCROLL_END_Y_RATIO = 0.42f
 
         @Volatile
         private var instance: ReaderAccessibilityService? = null
