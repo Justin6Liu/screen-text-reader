@@ -261,15 +261,26 @@ object ScreenReaderController {
             if (incomingSegments.isEmpty()) return@forEach
 
             val overlapCount = findOverlappingSegmentCount(acceptedSegments, incomingSegments)
-            incomingSegments
+            val candidateSegments = incomingSegments
                 .drop(overlapCount)
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
-                .forEach { segment ->
-                    if (!acceptedSegments.hasRecentDuplicate(segment)) {
-                        acceptedSegments += segment
-                    }
+
+            if (acceptedSegments.hasRecentCaptureDuplicate(candidateSegments)) {
+                return@forEach
+            }
+
+            val segmentsToAppend = if (item.isNearScrollableEnd()) {
+                candidateSegments.filterNovelAgainst(acceptedSegments)
+            } else {
+                candidateSegments
+            }
+
+            segmentsToAppend.forEach { segment ->
+                if (!acceptedSegments.hasRecentDuplicate(segment)) {
+                    acceptedSegments += segment
                 }
+            }
         }
 
         val builder = StringBuilder()
@@ -372,6 +383,66 @@ object ScreenReaderController {
         return takeLast(SCROLLABLE_RECENT_DUPLICATE_LOOKBACK).any { recent ->
             recent.scrollableSimilarity(segment) >= SCROLLABLE_DUPLICATE_SIMILARITY
         }
+    }
+
+    private fun List<String>.filterNovelAgainst(existingSegments: List<String>): List<String> {
+        if (isEmpty() || existingSegments.isEmpty()) return this
+
+        val recentSegments = existingSegments.takeLast(SCROLLABLE_END_NOVELTY_LOOKBACK)
+        val recentText = recentSegments.joinToString(separator = "").normalizedForScrollableMerge()
+        if (recentText.length < SCROLLABLE_CAPTURE_DUPLICATE_MIN_CHARS) return this
+
+        val novelSegments = filter { segment ->
+            segment.isNovelComparedWith(recentSegments, recentText)
+        }
+
+        val incomingText = joinToString(separator = "").normalizedForScrollableMerge()
+        val novelText = novelSegments.joinToString(separator = "").normalizedForScrollableMerge()
+        val noveltyRatio = if (incomingText.isEmpty()) {
+            0.0
+        } else {
+            novelText.length.toDouble() / incomingText.length.toDouble()
+        }
+
+        return if (noveltyRatio <= SCROLLABLE_END_LOW_NOVELTY_RATIO) {
+            novelSegments
+        } else {
+            this
+        }
+    }
+
+    private fun String.isNovelComparedWith(
+        recentSegments: List<String>,
+        recentText: String
+    ): Boolean {
+        val normalized = normalizedForScrollableMerge()
+        if (normalized.length < SCROLLABLE_END_NOVELTY_MIN_CHARS) return true
+        if (recentText.contains(normalized)) return false
+
+        return recentSegments.none { recent ->
+            val recentNormalized = recent.normalizedForScrollableMerge()
+            recentNormalized.contains(normalized) ||
+                normalized.scrollableSimilarity(recentNormalized) >= SCROLLABLE_END_SEGMENT_DUPLICATE_SIMILARITY
+        }
+    }
+
+    private fun List<String>.hasRecentCaptureDuplicate(incomingSegments: List<String>): Boolean {
+        if (isEmpty() || incomingSegments.isEmpty()) return false
+
+        val incomingText = incomingSegments.joinToString(separator = "").normalizedForScrollableMerge()
+        if (incomingText.length < SCROLLABLE_CAPTURE_DUPLICATE_MIN_CHARS) return false
+
+        val tailSegmentCount = (incomingSegments.size + SCROLLABLE_CAPTURE_DUPLICATE_EXTRA_LOOKBACK)
+            .coerceAtMost(size)
+        val recentText = takeLast(tailSegmentCount).joinToString(separator = "").normalizedForScrollableMerge()
+        if (recentText.length < SCROLLABLE_CAPTURE_DUPLICATE_MIN_CHARS) return false
+
+        return recentText.contains(incomingText) ||
+            recentText.scrollableSimilarity(incomingText) >= SCROLLABLE_CAPTURE_DUPLICATE_SIMILARITY
+    }
+
+    private fun ScrollableOcrOutput.isNearScrollableEnd(): Boolean {
+        return captureIndex >= captureCount - SCROLLABLE_END_NOVELTY_CAPTURE_COUNT
     }
 
     private fun String.scrollableSimilarity(other: String): Double {
@@ -905,6 +976,14 @@ object ScreenReaderController {
     private const val SCROLLABLE_RECENT_DUPLICATE_LOOKBACK = 12
     private const val SCROLLABLE_OVERLAP_SIMILARITY = 0.74
     private const val SCROLLABLE_DUPLICATE_SIMILARITY = 0.88
+    private const val SCROLLABLE_CAPTURE_DUPLICATE_SIMILARITY = 0.82
+    private const val SCROLLABLE_CAPTURE_DUPLICATE_MIN_CHARS = 24
+    private const val SCROLLABLE_CAPTURE_DUPLICATE_EXTRA_LOOKBACK = 8
+    private const val SCROLLABLE_END_NOVELTY_CAPTURE_COUNT = 3
+    private const val SCROLLABLE_END_NOVELTY_LOOKBACK = 18
+    private const val SCROLLABLE_END_LOW_NOVELTY_RATIO = 0.45
+    private const val SCROLLABLE_END_NOVELTY_MIN_CHARS = 8
+    private const val SCROLLABLE_END_SEGMENT_DUPLICATE_SIMILARITY = 0.80
     private const val SCROLLABLE_SHORT_TEXT_LENGTH = 8
     private const val SCROLLABLE_SAFE_EDGE_RATIO = 0.12f
     private const val SCROLLABLE_SAFE_EDGE_MIN_PX = 120

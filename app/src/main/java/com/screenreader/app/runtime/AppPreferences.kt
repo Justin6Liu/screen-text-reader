@@ -97,7 +97,7 @@ object AppPreferences {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    const val DEFAULT_AUTO_SCROLL_MAX_CAPTURES = 10
+    const val DEFAULT_AUTO_SCROLL_MAX_CAPTURES = 12
     const val MIN_AUTO_SCROLL_MAX_CAPTURES = 1
     const val MAX_AUTO_SCROLL_MAX_CAPTURES = 15
 }
