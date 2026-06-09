@@ -134,6 +134,10 @@ class SpeechManager(
         return speakInternal(text, onRangeStart, allowEngineReset = true)
     }
 
+    fun speakWithoutEngineReset(text: String): Boolean {
+        return speakInternal(text, onRangeStart = null, allowEngineReset = false)
+    }
+
     private fun speakInternal(
         text: String,
         onRangeStart: ((Int, Int) -> Unit)?,

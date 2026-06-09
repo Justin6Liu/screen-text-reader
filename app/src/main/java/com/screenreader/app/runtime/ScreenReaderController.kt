@@ -716,6 +716,13 @@ object ScreenReaderController {
         }
     }
 
+    fun readDemoTextWithoutEngineReset() {
+        val started = speechManager?.speakWithoutEngineReset("原始语音测试。这个按钮不会自动重置语音引擎。") == true
+        if (started) {
+            updateStatus("Playing raw demo speech without engine reset.")
+        }
+    }
+
     fun getUiStatus(): String = lastStatus
 
     fun getLastRecognizedText(): String = lastRecognizedText

@@ -162,6 +162,13 @@
             android:text="@string/test_speech" />
 
         <Button
+            android:id="@+id/testReadNoResetButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Test Speech Without Engine Reset" />
+
+        <Button
             android:id="@+id/stopSpeechButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

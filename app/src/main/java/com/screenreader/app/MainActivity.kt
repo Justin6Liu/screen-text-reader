@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stopOverlayButton: Button
     private lateinit var stopSpeechButton: Button
     private lateinit var testReadButton: Button
+    private lateinit var testReadNoResetButton: Button
     private lateinit var developerModeButton: Button
     private lateinit var languageSwitchButton: Button
     private lateinit var developerPasswordInput: EditText
@@ -71,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         stopOverlayButton = findViewById(R.id.stopOverlayButton)
         stopSpeechButton = findViewById(R.id.stopSpeechButton)
         testReadButton = findViewById(R.id.testReadButton)
+        testReadNoResetButton = findViewById(R.id.testReadNoResetButton)
         developerModeButton = findViewById(R.id.developerModeButton)
         languageSwitchButton = findViewById(R.id.languageSwitchButton)
         developerPasswordInput = findViewById(R.id.developerPasswordInput)
@@ -207,6 +209,11 @@ class MainActivity : AppCompatActivity() {
             ScreenReaderController.readDemoText()
             refreshStatus()
         }
+
+        testReadNoResetButton.setOnClickListener {
+            ScreenReaderController.readDemoTextWithoutEngineReset()
+            refreshStatus()
+        }
     }
 
     override fun onResume() {
@@ -263,6 +270,7 @@ class MainActivity : AppCompatActivity() {
         startOverlayButton.text = text("Start Floating Button", "启动悬浮按钮")
         stopOverlayButton.text = text("Stop Floating Button", "关闭悬浮按钮")
         testReadButton.text = text("Test Chinese Speech", "测试中文朗读")
+        testReadNoResetButton.text = text("Test Speech Without Engine Reset", "测试朗读（不重置语音引擎）")
         stopSpeechButton.text = text("Stop Speech", "停止朗读")
         debugModeCheckBox.text = text("Debug OCR boxes after capture", "截图后显示 OCR 调试框")
         saveDebugScreenshotsCheckBox.text = text("Save debug screenshots locally", "保存调试截图到本机")
@@ -299,6 +307,7 @@ class MainActivity : AppCompatActivity() {
         accessibilityButton.visibility = developerVisibility
         batteryButton.visibility = developerVisibility
         testReadButton.visibility = developerVisibility
+        testReadNoResetButton.visibility = developerVisibility
         stopSpeechButton.visibility = developerVisibility
         developerPasswordInput.visibility = if (developerMode) android.view.View.GONE else android.view.View.VISIBLE
     }
@@ -334,6 +343,7 @@ class MainActivity : AppCompatActivity() {
             status.startsWith("Overlay permission is missing") -> "缺少悬浮窗权限，请先授权。"
             status.startsWith("Speech is not ready") -> "语音朗读还没准备好。"
             status.startsWith("Playing demo speech") -> "正在播放测试语音。"
+            status.startsWith("Playing raw demo speech") -> "正在播放原始测试语音。"
             else -> status
         }
     }
