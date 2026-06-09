@@ -10,18 +10,14 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 class SpeechManager(
-    context: Context,
+    private val context: Context,
     private val onStatusChanged: (String) -> Unit,
     private val onSpeechStarted: () -> Unit,
     private val onSpeechFinished: () -> Unit
 ) : TextToSpeech.OnInitListener {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val textToSpeech = TextToSpeech(context.applicationContext) { status ->
-        mainHandler.post {
-            onInit(status)
-        }
-    }
+    private var textToSpeech: TextToSpeech? = null
     private val candidateLocales = listOf(
         Locale.SIMPLIFIED_CHINESE,
         Locale.CHINA,
@@ -46,12 +42,22 @@ class SpeechManager(
     private var currentSegmentStartListener: ((Int) -> Unit)? = null
     @Volatile
     private var finalUtteranceId: String? = null
+    @Volatile
+    private var pendingRetry: (() -> Unit)? = null
 
     private val sequenceCounter = AtomicInteger(0)
 
+    init {
+        createTextToSpeech()
+    }
+
     override fun onInit(status: Int) {
         initAttempted = true
-        val tts = textToSpeech
+        val tts = textToSpeech ?: run {
+            initialized = false
+            onStatusChanged("Text-to-speech failed to initialize. Engine: Unknown")
+            return
+        }
         if (status == TextToSpeech.SUCCESS) {
             initialized = true
             engineLabel = tts.defaultEngine ?: "Unknown"
@@ -99,9 +105,24 @@ class SpeechManager(
                     "Chinese speech fallback failed. Engine: $engineLabel. Default locale: ${Locale.getDefault().toLanguageTag()}"
                 }
             )
+            if (ready) {
+                val retry = pendingRetry
+                pendingRetry = null
+                if (retry != null) {
+                    mainHandler.postDelayed(retry, TTS_RETRY_AFTER_INIT_DELAY_MS)
+                }
+            } else if (pendingRetry != null) {
+                pendingRetry = null
+                notifySpeechCouldNotStart()
+            }
         } else {
             initialized = false
+            val hadPendingRetry = pendingRetry != null
+            pendingRetry = null
             onStatusChanged("Text-to-speech failed to initialize. Engine: ${tts.defaultEngine ?: "Unknown"} Error: $status")
+            if (hadPendingRetry) {
+                notifySpeechCouldNotStart()
+            }
         }
     }
 
@@ -110,6 +131,14 @@ class SpeechManager(
     }
 
     fun speak(text: String, onRangeStart: ((Int, Int) -> Unit)?): Boolean {
+        return speakInternal(text, onRangeStart, allowEngineReset = true)
+    }
+
+    private fun speakInternal(
+        text: String,
+        onRangeStart: ((Int, Int) -> Unit)?,
+        allowEngineReset: Boolean
+    ): Boolean {
         if (!ready) {
             onStatusChanged(
                 if (!initAttempted) {
@@ -122,20 +151,40 @@ class SpeechManager(
             )
             return false
         }
-        textToSpeech.stop()
+        val tts = textToSpeech ?: return resetSpeechEngineAndRetry(
+            message = "Speech engine is unavailable. Engine: $engineLabel.",
+            retry = { speakInternal(text, onRangeStart, allowEngineReset = false) }
+        )
+
+        tts.stop()
         currentRangeListener = onRangeStart
         currentSegmentStartListener = null
         finalUtteranceId = SINGLE_UTTERANCE_ID
-        val result = textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, SINGLE_UTTERANCE_ID)
+        val result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, SINGLE_UTTERANCE_ID)
         if (result == TextToSpeech.ERROR) {
             clearSpeechCallbacks()
-            onStatusChanged("Speech engine rejected playback. Engine: $engineLabel")
+            if (allowEngineReset) {
+                return resetSpeechEngineAndRetry(
+                    message = "Speech engine rejected playback. Engine: $engineLabel.",
+                    retry = { speakInternal(text, onRangeStart, allowEngineReset = false) }
+                )
+            }
+            onStatusChanged("Speech engine rejected playback after reset. Engine: $engineLabel")
+            notifySpeechCouldNotStart()
             return false
         }
         return result == TextToSpeech.SUCCESS
     }
 
     fun speakSegments(segments: List<String>, onSegmentStart: (Int) -> Unit): Boolean {
+        return speakSegmentsInternal(segments, onSegmentStart, allowEngineReset = true)
+    }
+
+    private fun speakSegmentsInternal(
+        segments: List<String>,
+        onSegmentStart: (Int) -> Unit,
+        allowEngineReset: Boolean
+    ): Boolean {
         if (!ready) {
             onStatusChanged(
                 if (!initAttempted) {
@@ -152,7 +201,12 @@ class SpeechManager(
         val speakableSegments = segments.map { it.trim() }.filter { it.isNotEmpty() }
         if (speakableSegments.isEmpty()) return false
 
-        textToSpeech.stop()
+        val tts = textToSpeech ?: return resetSpeechEngineAndRetry(
+            message = "Speech engine is unavailable. Engine: $engineLabel.",
+            retry = { speakSegmentsInternal(segments, onSegmentStart, allowEngineReset = false) }
+        )
+
+        tts.stop()
         currentRangeListener = null
         currentSegmentStartListener = onSegmentStart
 
@@ -162,7 +216,7 @@ class SpeechManager(
         var accepted = true
         speakableSegments.forEachIndexed { index, segment ->
             val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            val result = textToSpeech.speak(segment, queueMode, null, segmentUtteranceId(sequence, index))
+            val result = tts.speak(segment, queueMode, null, segmentUtteranceId(sequence, index))
             if (result == TextToSpeech.ERROR) {
                 accepted = false
             }
@@ -170,7 +224,14 @@ class SpeechManager(
 
         if (!accepted) {
             clearSpeechCallbacks()
-            onStatusChanged("Speech engine rejected segmented playback. Engine: $engineLabel")
+            if (allowEngineReset) {
+                return resetSpeechEngineAndRetry(
+                    message = "Speech engine rejected segmented playback. Engine: $engineLabel.",
+                    retry = { speakSegmentsInternal(segments, onSegmentStart, allowEngineReset = false) }
+                )
+            }
+            onStatusChanged("Speech engine rejected segmented playback after reset. Engine: $engineLabel")
+            notifySpeechCouldNotStart()
         }
         return accepted
     }
@@ -179,6 +240,15 @@ class SpeechManager(
         segments: List<String>,
         startIndex: Int,
         onSegmentStart: (Int) -> Unit
+    ): Boolean {
+        return speakSegmentsFromInternal(segments, startIndex, onSegmentStart, allowEngineReset = true)
+    }
+
+    private fun speakSegmentsFromInternal(
+        segments: List<String>,
+        startIndex: Int,
+        onSegmentStart: (Int) -> Unit,
+        allowEngineReset: Boolean
     ): Boolean {
         if (!ready) {
             onStatusChanged(
@@ -198,7 +268,12 @@ class SpeechManager(
             .filter { (index, text) -> index >= startIndex && text.isNotEmpty() }
         if (indexedSegments.isEmpty()) return false
 
-        textToSpeech.stop()
+        val tts = textToSpeech ?: return resetSpeechEngineAndRetry(
+            message = "Speech engine is unavailable. Engine: $engineLabel.",
+            retry = { speakSegmentsFromInternal(segments, startIndex, onSegmentStart, allowEngineReset = false) }
+        )
+
+        tts.stop()
         currentRangeListener = null
         currentSegmentStartListener = onSegmentStart
 
@@ -208,7 +283,7 @@ class SpeechManager(
         var accepted = true
         indexedSegments.forEachIndexed { queueIndex, (originalIndex, segment) ->
             val queueMode = if (queueIndex == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            val result = textToSpeech.speak(segment, queueMode, null, segmentUtteranceId(sequence, originalIndex))
+            val result = tts.speak(segment, queueMode, null, segmentUtteranceId(sequence, originalIndex))
             if (result == TextToSpeech.ERROR) {
                 accepted = false
             }
@@ -216,26 +291,66 @@ class SpeechManager(
 
         if (!accepted) {
             clearSpeechCallbacks()
-            onStatusChanged("Speech engine rejected segmented playback. Engine: $engineLabel")
+            if (allowEngineReset) {
+                return resetSpeechEngineAndRetry(
+                    message = "Speech engine rejected segmented playback. Engine: $engineLabel.",
+                    retry = { speakSegmentsFromInternal(segments, startIndex, onSegmentStart, allowEngineReset = false) }
+                )
+            }
+            onStatusChanged("Speech engine rejected segmented playback after reset. Engine: $engineLabel")
+            notifySpeechCouldNotStart()
         }
         return accepted
     }
 
     fun stop() {
         clearSpeechCallbacks()
-        textToSpeech.stop()
+        textToSpeech?.stop()
         onSpeechFinished()
     }
 
     fun pausePlayback() {
         clearSpeechCallbacks()
-        textToSpeech.stop()
+        textToSpeech?.stop()
     }
 
     private fun clearSpeechCallbacks() {
         currentRangeListener = null
         currentSegmentStartListener = null
         finalUtteranceId = null
+    }
+
+    private fun notifySpeechCouldNotStart() {
+        onSpeechStarted()
+        onSpeechFinished()
+    }
+
+    private fun createTextToSpeech() {
+        textToSpeech = TextToSpeech(context.applicationContext) { status ->
+            mainHandler.post {
+                onInit(status)
+            }
+        }
+    }
+
+    private fun resetSpeechEngineAndRetry(
+        message: String,
+        retry: () -> Unit
+    ): Boolean {
+        clearSpeechCallbacks()
+        ready = false
+        initialized = false
+        initAttempted = false
+        selectedLocale = null
+        pendingRetry = retry
+        onStatusChanged("$message Resetting speech engine...")
+        runCatching {
+            textToSpeech?.stop()
+            textToSpeech?.shutdown()
+        }
+        textToSpeech = null
+        createTextToSpeech()
+        return true
     }
 
     private fun segmentUtteranceId(sequence: Int, index: Int): String {
@@ -248,23 +363,24 @@ class SpeechManager(
     }
 
     private fun configureBestChineseLocale(): Boolean {
+        val tts = textToSpeech ?: return false
         for (locale in candidateLocales.distinctBy { it.toLanguageTag() }) {
             if (!locale.language.equals("zh", ignoreCase = true)) {
                 continue
             }
-            val availability = textToSpeech.isLanguageAvailable(locale)
+            val availability = tts.isLanguageAvailable(locale)
             if (availability == TextToSpeech.LANG_MISSING_DATA || availability == TextToSpeech.LANG_NOT_SUPPORTED) {
                 continue
             }
 
-            val setResult = textToSpeech.setLanguage(locale)
+            val setResult = tts.setLanguage(locale)
             if (setResult != TextToSpeech.LANG_MISSING_DATA && setResult != TextToSpeech.LANG_NOT_SUPPORTED) {
                 selectedLocale = locale
                 return true
             }
         }
 
-        val voiceLocale = textToSpeech.voice?.locale
+        val voiceLocale = tts.voice?.locale
         if (voiceLocale != null && voiceLocale.language.equals("zh", ignoreCase = true)) {
             selectedLocale = voiceLocale
             return true
@@ -272,21 +388,21 @@ class SpeechManager(
 
         val defaultLocale = Locale.getDefault()
         if (defaultLocale.language.equals("zh", ignoreCase = true)) {
-            val setResult = textToSpeech.setLanguage(defaultLocale)
+            val setResult = tts.setLanguage(defaultLocale)
             if (setResult != TextToSpeech.LANG_MISSING_DATA && setResult != TextToSpeech.LANG_NOT_SUPPORTED) {
                 selectedLocale = defaultLocale
                 return true
             }
         }
 
-        val availableVoice = textToSpeech.voices
+        val availableVoice = tts.voices
             ?.firstOrNull { voice ->
                 !voice.isNetworkConnectionRequired &&
                     voice.locale?.language.equals("zh", ignoreCase = true)
             }
 
         if (availableVoice != null) {
-            val voiceSet = runCatching { textToSpeech.voice = availableVoice }.isSuccess
+            val voiceSet = runCatching { tts.voice = availableVoice }.isSuccess
             if (voiceSet) {
                 selectedLocale = availableVoice.locale
                 return true
@@ -299,5 +415,6 @@ class SpeechManager(
     companion object {
         private const val SINGLE_UTTERANCE_ID = "screen-reader-tts"
         private const val SEGMENT_UTTERANCE_PREFIX = "screen-reader-segment-"
+        private const val TTS_RETRY_AFTER_INIT_DELAY_MS = 250L
     }
 }
