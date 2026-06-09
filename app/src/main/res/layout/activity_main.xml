@@ -127,6 +127,58 @@
             android:textColor="@color/textPrimary"
             android:textSize="16sp" />
 
+        <TextView
+            android:id="@+id/ocrModeTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="OCR Mode"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <RadioGroup
+            android:id="@+id/ocrModeGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/ocrFastModeButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Fast"
+                android:textColor="@color/textPrimary"
+                android:textSize="16sp" />
+
+            <RadioButton
+                android:id="@+id/ocrAccurateModeButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Accurate"
+                android:textColor="@color/textPrimary"
+                android:textSize="16sp" />
+
+            <RadioButton
+                android:id="@+id/ocrAiBoostModeButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="AI Boost (placeholder)"
+                android:textColor="@color/textPrimary"
+                android:textSize="16sp" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/lastRunTimingText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/panel_background"
+            android:padding="12dp"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
         <Button
             android:id="@+id/languageSwitchButton"
             android:layout_width="match_parent"

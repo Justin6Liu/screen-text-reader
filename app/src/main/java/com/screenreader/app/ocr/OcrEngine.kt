@@ -9,6 +9,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.TextRecognition
+import com.screenreader.app.runtime.OcrMode
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -17,24 +18,44 @@ class OcrEngine(context: Context) {
 
     private val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
 
-    fun recognize(bitmap: Bitmap): Result<OcrOutput> {
+    fun recognize(bitmap: Bitmap, mode: OcrMode = OcrMode.ACCURATE): Result<OcrOutput> {
         return runCatching {
             val scaledBitmap = downscale(bitmap)
             val sourceBitmap = scaledBitmap.bitmap
             val fullWidth = sourceBitmap.width
             val fullHeight = sourceBitmap.height
+            val effectiveMode = if (mode == OcrMode.AI_BOOST) OcrMode.ACCURATE else mode
 
-            val globalResult = listOf(
+            val fastVariants = listOf(
                 ImageVariant(bitmap = sourceBitmap, label = "full screen"),
-                ImageVariant(bitmap = enhanceForOcr(sourceBitmap), label = "full screen enhanced"),
-                createUpscaledVariant(sourceBitmap, UPSCALE_FACTOR, "full screen upscaled"),
-                createUpscaledVariant(enhanceForOcr(sourceBitmap), UPSCALE_FACTOR, "full screen enhanced upscaled")
-            ).filterNotNull()
+                ImageVariant(bitmap = enhanceForOcr(sourceBitmap), label = "full screen enhanced")
+            )
+            var globalResult = fastVariants
                 .map { variant -> processVariant(variant, fullWidth, fullHeight) }
                 .maxByOrNull { it.score }
                 ?: ProcessedOcrResult.empty(fullWidth, fullHeight)
 
-            val regionResult = rerunParagraphRegions(sourceBitmap, globalResult, fullWidth, fullHeight)
+            if (effectiveMode == OcrMode.ACCURATE && shouldRunUpscaledVariants(globalResult, fullWidth, fullHeight)) {
+                val upscaledResult = listOf(
+                    createUpscaledVariant(sourceBitmap, UPSCALE_FACTOR, "full screen upscaled"),
+                    createUpscaledVariant(enhanceForOcr(sourceBitmap), UPSCALE_FACTOR, "full screen enhanced upscaled")
+                ).filterNotNull()
+                    .map { variant -> processVariant(variant, fullWidth, fullHeight) }
+                    .maxByOrNull { it.score }
+
+                if (upscaledResult != null && upscaledResult.score > globalResult.score) {
+                    globalResult = upscaledResult
+                }
+            }
+
+            val regionResult = if (
+                effectiveMode == OcrMode.ACCURATE &&
+                    shouldRerunParagraphRegions(globalResult, fullWidth, fullHeight)
+            ) {
+                rerunParagraphRegions(sourceBitmap, globalResult, fullWidth, fullHeight)
+            } else {
+                globalResult
+            }
             chooseBetterResult(globalResult, regionResult).output
         }
     }
@@ -262,6 +283,51 @@ class OcrEngine(context: Context) {
             score = combinedScore,
             paragraphBounds = combinedParagraphBounds
         )
+    }
+
+    private fun shouldRerunParagraphRegions(
+        globalResult: ProcessedOcrResult,
+        fullImageWidth: Int,
+        fullImageHeight: Int
+    ): Boolean {
+        return !isStrongGlobalResult(globalResult, fullImageWidth, fullImageHeight)
+    }
+
+    private fun shouldRunUpscaledVariants(
+        globalResult: ProcessedOcrResult,
+        fullImageWidth: Int,
+        fullImageHeight: Int
+    ): Boolean {
+        return !isStrongGlobalResult(globalResult, fullImageWidth, fullImageHeight)
+    }
+
+    private fun isStrongGlobalResult(
+        globalResult: ProcessedOcrResult,
+        fullImageWidth: Int,
+        fullImageHeight: Int
+    ): Boolean {
+        val output = globalResult.output
+        val snapshot = output.debugSnapshot ?: return false
+        val text = output.text
+        if (text.isBlank()) return false
+
+        val lineCount = snapshot.lineBounds.size
+        val meaningfulChars = text.countMeaningfulChars()
+        val chineseRatio = text.chineseCharacterRatio()
+        val paragraphCount = globalResult.paragraphBounds.size
+        val hasLargeParagraph =
+            paragraphCount > 0 &&
+                globalResult.paragraphBounds.any { bounds ->
+                    bounds.width() >= fullImageWidth * 0.45 &&
+                        bounds.height() >= fullImageHeight * 0.10
+                }
+
+        return (
+            lineCount >= STRONG_RESULT_MIN_LINES &&
+                meaningfulChars >= STRONG_RESULT_MIN_CHARS &&
+                chineseRatio >= STRONG_RESULT_MIN_CHINESE_RATIO &&
+                hasLargeParagraph
+            )
     }
 
     private fun combineRegionReadableText(regionResults: List<RegionOcrResult>): ReadableText {
@@ -585,6 +651,12 @@ class OcrEngine(context: Context) {
         return count { !it.isWhitespace() && it != '，' && it != '。' }
     }
 
+    private fun String.chineseCharacterRatio(): Double {
+        val meaningfulChars = countMeaningfulChars()
+        if (meaningfulChars == 0) return 0.0
+        return count { it.isChineseCharacter() }.toDouble() / meaningfulChars.toDouble()
+    }
+
     private fun String.scoreReadableText(lineCount: Int, paragraphCount: Int): Int {
         val meaningfulChars = countMeaningfulChars()
         val chineseChars = count { it.isChineseCharacter() }
@@ -795,6 +867,9 @@ class OcrEngine(context: Context) {
         private const val REGION_RERUN_SCORE_BONUS = 16
         private const val SCORE_SWITCH_MARGIN = 18
         private const val MAX_PHRASE_SEGMENT_CHARS = 70
+        private const val STRONG_RESULT_MIN_LINES = 8
+        private const val STRONG_RESULT_MIN_CHARS = 180
+        private const val STRONG_RESULT_MIN_CHINESE_RATIO = 0.62
         private const val AGGRESSIVE_TOP_ROW_FILTER_COUNT = 5
 
         private val TOP_ROW_TIME_PATTERN = Regex("""(^|[^\d])\d{1,2}[:：]\d{2}([^\d]|$)""")

@@ -16,6 +16,8 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.CompoundButton
 import android.widget.EditText
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,6 +25,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.screenreader.app.overlay.OverlayService
 import com.screenreader.app.runtime.AppPreferences
+import com.screenreader.app.runtime.OcrMode
 import com.screenreader.app.runtime.ScreenReaderController
 
 class MainActivity : AppCompatActivity() {
@@ -49,6 +52,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pauseResumeReadingCheckBox: CheckBox
     private lateinit var autoScrollCaptureCheckBox: CheckBox
     private lateinit var autoScrollMaxCapturesInput: EditText
+    private lateinit var ocrModeTitle: TextView
+    private lateinit var ocrModeGroup: RadioGroup
+    private lateinit var lastRunTimingText: TextView
     private lateinit var recognizedTextConsoleTitle: TextView
     private lateinit var recognizedTextConsoleText: TextView
 
@@ -83,6 +89,9 @@ class MainActivity : AppCompatActivity() {
         pauseResumeReadingCheckBox = findViewById(R.id.pauseResumeReadingCheckBox)
         autoScrollCaptureCheckBox = findViewById(R.id.autoScrollCaptureCheckBox)
         autoScrollMaxCapturesInput = findViewById(R.id.autoScrollMaxCapturesInput)
+        ocrModeTitle = findViewById(R.id.ocrModeTitle)
+        ocrModeGroup = findViewById(R.id.ocrModeGroup)
+        lastRunTimingText = findViewById(R.id.lastRunTimingText)
         recognizedTextConsoleTitle = findViewById(R.id.recognizedTextConsoleTitle)
         recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
 
@@ -135,6 +144,16 @@ class MainActivity : AppCompatActivity() {
 
             override fun afterTextChanged(s: Editable?) = Unit
         })
+
+        ocrModeGroup.setOnCheckedChangeListener { _, checkedId ->
+            val mode = when (checkedId) {
+                R.id.ocrFastModeButton -> OcrMode.FAST
+                R.id.ocrAiBoostModeButton -> OcrMode.AI_BOOST
+                else -> OcrMode.ACCURATE
+            }
+            AppPreferences.setOcrMode(this, mode)
+            refreshStatus()
+        }
 
         developerModeButton.setOnClickListener {
             if (AppPreferences.isDeveloperModeEnabled(this)) {
@@ -228,6 +247,7 @@ class MainActivity : AppCompatActivity() {
         val overlayRunning = OverlayService.isRunning
         val developerMode = AppPreferences.isDeveloperModeEnabled(this)
         applyLanguage(developerMode)
+        updateOcrModeSelection()
 
         statusText.text = buildString {
             appendLine(text("Device Status", "设备状态"))
@@ -245,11 +265,13 @@ class MainActivity : AppCompatActivity() {
                 appendLine("${text("Reading highlight", "朗读高亮")}: ${onOffText(AppPreferences.isHighlightReadingLineEnabled(this@MainActivity))}")
                 appendLine("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
                 appendLine("${text("Auto scroll capture", "自动滚动整图识别")}: ${onOffText(AppPreferences.isAutoScrollCaptureEnabled(this@MainActivity))}")
-                append("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
+                appendLine("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
+                append("${text("OCR mode", "OCR 模式")}: ${ocrModeLabel(AppPreferences.getOcrMode(this@MainActivity))}")
             }
         }
 
         speechStatusText.text = localizeStatus(ScreenReaderController.getUiStatus())
+        lastRunTimingText.text = lastRunTimingLabel()
         updateDeveloperControlVisibility(developerMode)
         val showConsole = developerMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
         val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
@@ -279,6 +301,10 @@ class MainActivity : AppCompatActivity() {
         pauseResumeReadingCheckBox.text = text("Tap to pause and resume reading", "点击悬浮按钮暂停/继续朗读")
         autoScrollCaptureCheckBox.text = text("Auto scroll capture full image", "自动滚动识别长图")
         autoScrollMaxCapturesInput.hint = text("Max captures 1-15", "最大截图次数 1-15")
+        ocrModeTitle.text = text("OCR Mode", "OCR 模式")
+        findViewById<RadioButton>(R.id.ocrFastModeButton).text = text("Fast", "快速")
+        findViewById<RadioButton>(R.id.ocrAccurateModeButton).text = text("Accurate", "准确")
+        findViewById<RadioButton>(R.id.ocrAiBoostModeButton).text = text("AI Boost (placeholder)", "AI 增强（占位）")
         recognizedTextConsoleTitle.text = text("Recognized Text", "识别文字")
         developerPasswordInput.hint = text("Password", "密码")
         developerModeButton.text = if (developerMode) {
@@ -302,6 +328,9 @@ class MainActivity : AppCompatActivity() {
         pauseResumeReadingCheckBox.visibility = developerVisibility
         autoScrollCaptureCheckBox.visibility = developerVisibility
         autoScrollMaxCapturesInput.visibility = developerVisibility
+        ocrModeTitle.visibility = developerVisibility
+        ocrModeGroup.visibility = developerVisibility
+        lastRunTimingText.visibility = developerVisibility
         languageSwitchButton.visibility = developerVisibility
         overlayPermissionButton.visibility = developerVisibility
         accessibilityButton.visibility = developerVisibility
@@ -322,6 +351,38 @@ class MainActivity : AppCompatActivity() {
 
     private fun readyText(enabled: Boolean): String {
         return if (enabled) text("Ready", "已就绪") else text("Missing", "未授予")
+    }
+
+    private fun updateOcrModeSelection() {
+        val checkedId = when (AppPreferences.getOcrMode(this)) {
+            OcrMode.FAST -> R.id.ocrFastModeButton
+            OcrMode.ACCURATE -> R.id.ocrAccurateModeButton
+            OcrMode.AI_BOOST -> R.id.ocrAiBoostModeButton
+        }
+        if (ocrModeGroup.checkedRadioButtonId != checkedId) {
+            ocrModeGroup.check(checkedId)
+        }
+    }
+
+    private fun ocrModeLabel(mode: OcrMode): String {
+        return when (mode) {
+            OcrMode.FAST -> text("Fast", "快速")
+            OcrMode.ACCURATE -> text("Accurate", "准确")
+            OcrMode.AI_BOOST -> text("AI Boost placeholder", "AI 增强占位")
+        }
+    }
+
+    private fun lastRunTimingLabel(): String {
+        val durationMs = ScreenReaderController.getLastRunDurationMs()
+        return if (durationMs == null) {
+            text("Last run timing: not available yet.", "上次耗时：暂无。")
+        } else {
+            val seconds = durationMs / 1000.0
+            text(
+                "Last run: %.2fs from capture/scroll complete to reading start.".format(seconds),
+                "上次耗时：%.2f 秒（截图/滚动完成到开始朗读）。".format(seconds)
+            )
+        }
     }
 
     private fun localizeStatus(status: String): String {

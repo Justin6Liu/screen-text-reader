@@ -12,6 +12,7 @@ import com.screenreader.app.ocr.OcrEngine
 import com.screenreader.app.ocr.OcrReadSegment
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 object ScreenReaderController {
 
@@ -32,6 +33,8 @@ object ScreenReaderController {
     private var lastStatus: String = "Ready. Grant permissions, start the overlay, then tap the floating button."
     @Volatile
     private var lastRecognizedText: String = "No recognized text yet."
+    @Volatile
+    private var lastRunDurationMs: Long? = null
     @Volatile
     private var currentPlayback: PlaybackSession? = null
     @Volatile
@@ -140,19 +143,24 @@ object ScreenReaderController {
     }
 
     private fun captureScrollableAndRead(service: ReaderAccessibilityService) {
-        val captures = mutableListOf<Bitmap>()
+        val ocrFutures = mutableListOf<Future<ScrollableOcrOutput?>>()
         val maxCaptures = appContext
             ?.let { AppPreferences.getAutoScrollMaxCaptures(it) }
             ?: AppPreferences.DEFAULT_AUTO_SCROLL_MAX_CAPTURES
+        var previousSignature: ScreenSignature? = null
 
         fun finishWithCaptures() {
             restoreOverlaysAfterCapture()
-            if (captures.isEmpty()) {
+            if (ocrFutures.isEmpty()) {
                 finishWithStatus("Screen capture failed.")
                 return
             }
+            val processingStartMs = android.os.SystemClock.uptimeMillis()
             worker.execute {
-                recognizeScrollableCapturesAndRead(captures)
+                recognizeScrollableCapturesAndRead(
+                    futures = ocrFutures.toList(),
+                    processingStartMs = processingStartMs
+                )
             }
         }
 
@@ -161,14 +169,16 @@ object ScreenReaderController {
             service.captureScreen { captureResult ->
                 captureResult
                     .onSuccess { bitmap ->
-                        val previous = captures.lastOrNull()
-                        if (previous != null && bitmap.isVisuallySimilarTo(previous)) {
+                        val signature = bitmap.toScreenSignature()
+                        val previous = previousSignature
+                        if (previous != null && signature.isVisuallySimilarTo(previous)) {
                             bitmap.recycle()
                             finishWithCaptures()
                             return@onSuccess
                         }
-                        captures += bitmap
-                        if (captures.size >= maxCaptures) {
+                        previousSignature = signature
+                        ocrFutures += submitScrollableOcr(bitmap, step)
+                        if (ocrFutures.size >= maxCaptures) {
                             finishWithCaptures()
                             return@onSuccess
                         }
@@ -191,39 +201,44 @@ object ScreenReaderController {
         captureStep(0)
     }
 
-    private fun recognizeScrollableCapturesAndRead(captures: List<Bitmap>) {
+    private fun submitScrollableOcr(bitmap: Bitmap, captureIndex: Int): Future<ScrollableOcrOutput?> {
+        return worker.submit<ScrollableOcrOutput?> {
+            val ocr = ocrEngine ?: run {
+                if (!bitmap.isRecycled) bitmap.recycle()
+                return@submit null
+            }
+            updateStatus("Recognizing long image... ${captureIndex + 1}")
+            maybeSaveDebugScreenshot(bitmap)
+            val result = ocr.recognize(bitmap, currentOcrMode())
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+            result.getOrNull()
+                ?.takeIf { output -> output.text.isNotBlank() }
+                ?.let { output ->
+                    ScrollableOcrOutput(
+                        output = output,
+                        captureIndex = captureIndex,
+                        captureCount = 0
+                    )
+                }
+        }
+    }
+
+    private fun recognizeScrollableCapturesAndRead(
+        futures: List<Future<ScrollableOcrOutput?>>,
+        processingStartMs: Long
+    ) {
         val ocr = ocrEngine
         if (ocr == null) {
-            captures.recycleAll()
             finishWithStatus("OCR engine unavailable.")
             return
         }
 
-        val outputs = mutableListOf<ScrollableOcrOutput>()
-        captures.forEachIndexed { index, capture ->
-            updateStatus("Recognizing long image... ${index + 1}/${captures.size}")
-            maybeSaveDebugScreenshot(capture)
-            val result = ocr.recognize(capture)
-            if (!capture.isRecycled) {
-                capture.recycle()
-            }
-            result
-                .onSuccess { output ->
-                    if (output.text.isNotBlank()) {
-                        outputs += ScrollableOcrOutput(
-                            output = output,
-                            captureIndex = index,
-                            captureCount = captures.size
-                        )
-                    }
-                }
-                .onFailure { error ->
-                    if (outputs.isEmpty()) {
-                        captures.recycleAll()
-                        finishWithStatus(error.message ?: "OCR failed.")
-                        return
-                    }
-                }
+        val captureCount = futures.size
+        val outputs = futures.mapIndexedNotNull { index, future ->
+            updateStatus("Finishing OCR... ${index + 1}/$captureCount")
+            runCatching { future.get() }.getOrNull()?.copy(captureCount = captureCount)
         }
 
         val output = combineScrollableOutputs(outputs)
@@ -235,17 +250,10 @@ object ScreenReaderController {
 
         emitDebugSnapshot(null)
         updateStatus("Reading aloud...")
+        recordLastRunDuration(processingStartMs)
         val started = speakOcrOutput(output)
         if (!started) {
             finishWithStatus("Speech is not ready yet.")
-        }
-    }
-
-    private fun List<Bitmap>.recycleAll() {
-        forEach { bitmap ->
-            if (!bitmap.isRecycled) {
-                bitmap.recycle()
-            }
         }
     }
 
@@ -516,9 +524,10 @@ object ScreenReaderController {
 
     private fun recognizeAndRead(bitmap: Bitmap) {
         worker.execute {
+            val processingStartMs = android.os.SystemClock.uptimeMillis()
             maybeSaveDebugScreenshot(bitmap)
             updateStatus("Recognizing text...")
-            val result = ocrEngine?.recognize(bitmap)
+            val result = ocrEngine?.recognize(bitmap, currentOcrMode())
             bitmap.recycle()
             result
                 ?.onSuccess { output ->
@@ -528,6 +537,7 @@ object ScreenReaderController {
                         finishWithStatus("No text found on screen.")
                     } else {
                         updateStatus("Reading aloud...")
+                        recordLastRunDuration(processingStartMs)
                         val started = speakOcrOutput(output)
                         if (!started) {
                             finishWithStatus("Speech is not ready yet.")
@@ -538,6 +548,15 @@ object ScreenReaderController {
                     finishWithStatus(error.message ?: "OCR failed.")
                 } ?: finishWithStatus("OCR engine unavailable.")
         }
+    }
+
+    private fun currentOcrMode(): OcrMode {
+        val context = appContext ?: return OcrMode.ACCURATE
+        return AppPreferences.getOcrMode(context)
+    }
+
+    private fun recordLastRunDuration(startTimeMs: Long) {
+        lastRunDurationMs = (android.os.SystemClock.uptimeMillis() - startTimeMs).coerceAtLeast(0L)
     }
 
     private fun stitchVerticalCaptures(captures: List<Bitmap>): Bitmap {
@@ -647,24 +666,34 @@ object ScreenReaderController {
         return (INK_BACKGROUND_LUMINANCE - luminance).coerceAtLeast(0.0)
     }
 
-    private fun Bitmap.isVisuallySimilarTo(other: Bitmap): Boolean {
-        val width = minOf(width, other.width)
-        val height = minOf(height, other.height)
-        if (width <= 0 || height <= 0) return false
+    private fun Bitmap.toScreenSignature(): ScreenSignature {
+        val values = IntArray(SCREEN_COMPARE_GRID * SCREEN_COMPARE_GRID)
+        if (width <= 0 || height <= 0) return ScreenSignature(values)
 
-        var totalDifference = 0L
-        var samples = 0
+        var index = 0
         for (yIndex in 0 until SCREEN_COMPARE_GRID) {
             val y = ((yIndex + 0.5f) * height / SCREEN_COMPARE_GRID).toInt().coerceIn(0, height - 1)
             for (xIndex in 0 until SCREEN_COMPARE_GRID) {
                 val x = ((xIndex + 0.5f) * width / SCREEN_COMPARE_GRID).toInt().coerceIn(0, width - 1)
-                val first = getPixel(x, y)
-                val second = other.getPixel(x, y)
-                totalDifference += kotlin.math.abs(Color.red(first) - Color.red(second))
-                totalDifference += kotlin.math.abs(Color.green(first) - Color.green(second))
-                totalDifference += kotlin.math.abs(Color.blue(first) - Color.blue(second))
-                samples += 3
+                values[index] = getPixel(x, y)
+                index++
             }
+        }
+        return ScreenSignature(values)
+    }
+
+    private fun ScreenSignature.isVisuallySimilarTo(other: ScreenSignature): Boolean {
+        if (pixels.size != other.pixels.size || pixels.isEmpty()) return false
+
+        var totalDifference = 0L
+        var samples = 0
+        for (index in pixels.indices) {
+            val first = pixels[index]
+            val second = other.pixels[index]
+            totalDifference += kotlin.math.abs(Color.red(first) - Color.red(second))
+            totalDifference += kotlin.math.abs(Color.green(first) - Color.green(second))
+            totalDifference += kotlin.math.abs(Color.blue(first) - Color.blue(second))
+            samples += 3
         }
 
         val averageDifference = totalDifference.toDouble() / samples.toDouble()
@@ -726,6 +755,8 @@ object ScreenReaderController {
     fun getUiStatus(): String = lastStatus
 
     fun getLastRecognizedText(): String = lastRecognizedText
+
+    fun getLastRunDurationMs(): Long? = lastRunDurationMs
 
     fun reportStatus(message: String) {
         updateStatus(message)
@@ -948,6 +979,10 @@ object ScreenReaderController {
         val captureCount: Int
     )
 
+    private data class ScreenSignature(
+        val pixels: IntArray
+    )
+
     private data class OverlapScore(
         val difference: Double,
         val isUsable: Boolean
@@ -961,9 +996,9 @@ object ScreenReaderController {
     private val CJK_UNIFIED_IDEOGRAPHS = 0x4E00..0x9FFF
 
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
-    private const val AUTO_SCROLL_MIN_SETTLE_DELAY_MS = 500L
-    private const val AUTO_SCROLL_QUIET_WINDOW_MS = 500L
-    private const val AUTO_SCROLL_MAX_SETTLE_DELAY_MS = 2200L
+    private const val AUTO_SCROLL_MIN_SETTLE_DELAY_MS = 300L
+    private const val AUTO_SCROLL_QUIET_WINDOW_MS = 350L
+    private const val AUTO_SCROLL_MAX_SETTLE_DELAY_MS = 1800L
     private const val AUTO_SCROLL_SETTLE_POLL_INTERVAL_MS = 100L
     private const val FALLBACK_AUTO_SCROLL_OVERLAP_RATIO = 0.35f
     private const val MIN_AUTO_SCROLL_OVERLAP_RATIO = 0.18f

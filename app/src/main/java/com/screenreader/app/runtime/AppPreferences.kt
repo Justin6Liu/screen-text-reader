@@ -14,6 +14,7 @@ object AppPreferences {
     private const val KEY_CHINESE_UI = "chinese_ui"
     private const val KEY_AUTO_SCROLL_CAPTURE = "auto_scroll_capture"
     private const val KEY_AUTO_SCROLL_MAX_CAPTURES = "auto_scroll_max_captures"
+    private const val KEY_OCR_MODE = "ocr_mode"
 
     fun isOcrDebugModeEnabled(context: Context): Boolean {
         return prefs(context).getBoolean(KEY_OCR_DEBUG_MODE, false)
@@ -94,10 +95,25 @@ object AppPreferences {
             .apply()
     }
 
+    fun getOcrMode(context: Context): OcrMode {
+        val name = prefs(context).getString(KEY_OCR_MODE, OcrMode.ACCURATE.name)
+        return OcrMode.values().firstOrNull { it.name == name } ?: OcrMode.ACCURATE
+    }
+
+    fun setOcrMode(context: Context, mode: OcrMode) {
+        prefs(context).edit().putString(KEY_OCR_MODE, mode.name).apply()
+    }
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     const val DEFAULT_AUTO_SCROLL_MAX_CAPTURES = 12
     const val MIN_AUTO_SCROLL_MAX_CAPTURES = 1
     const val MAX_AUTO_SCROLL_MAX_CAPTURES = 15
+}
+
+enum class OcrMode {
+    FAST,
+    ACCURATE,
+    AI_BOOST
 }
