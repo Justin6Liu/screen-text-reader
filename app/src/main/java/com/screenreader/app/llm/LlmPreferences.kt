@@ -14,6 +14,7 @@ object LlmPreferences {
     private const val KEY_API_KEY = "api_key"
     private const val KEY_MODEL = "model"
     private const val KEY_BASE_URL = "base_url"
+    private const val KEY_DISCLOSURE_ACCEPTED = "disclosure_accepted"
 
     fun isEnabled(context: Context): Boolean {
         return prefs(context).getBoolean(KEY_ENABLED, false)
@@ -21,6 +22,14 @@ object LlmPreferences {
 
     fun setEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    fun hasAcceptedDisclosure(context: Context): Boolean {
+        return prefs(context).getBoolean(KEY_DISCLOSURE_ACCEPTED, false)
+    }
+
+    fun setDisclosureAccepted(context: Context, accepted: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DISCLOSURE_ACCEPTED, accepted).apply()
     }
 
     fun getConfig(context: Context): LlmConfig {

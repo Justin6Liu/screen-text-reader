@@ -582,6 +582,13 @@ object ScreenReaderController {
             )
             return output
         }
+        if (!LlmPreferences.hasAcceptedDisclosure(context)) {
+            updateAiResponse(
+                response = "",
+                status = "AI correction not run because the online processing disclosure was not accepted."
+            )
+            return output
+        }
         updateStatus("Correcting OCR text...")
         val correction = LlmCorrectionEngine.correctWithDetails(context, output.text)
         updateAiResponse(

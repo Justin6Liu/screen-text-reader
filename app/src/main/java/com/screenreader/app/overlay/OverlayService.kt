@@ -1,5 +1,7 @@
 package com.screenreader.app.overlay
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +21,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
 import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
@@ -43,6 +46,7 @@ class OverlayService : Service(),
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayHiddenForCapture = false
     private var debugOverlayView: OcrDebugOverlayView? = null
+    private var processingAnimator: ObjectAnimator? = null
 
     private val clearDebugOverlay = Runnable {
         hideDebugOverlay()
@@ -239,6 +243,7 @@ class OverlayService : Service(),
     }
 
     private fun hideOverlay() {
+        stopProcessingAnimation()
         overlayView?.let { view ->
             windowManager.removeView(view)
         }
@@ -396,6 +401,7 @@ class OverlayService : Service(),
     private fun updateOverlayUi(state: ReaderState) {
         when (state) {
             ReaderState.IDLE -> {
+                stopProcessingAnimation()
                 overlayButton?.setImageResource(R.drawable.ic_overlay_play)
                 overlayButton?.contentDescription = text("Read screen text", "朗读屏幕文字")
                 overlayLabel?.text = text("Read", "朗读")
@@ -407,9 +413,11 @@ class OverlayService : Service(),
                 overlayButton?.contentDescription = text("Recognizing screen text", "正在识别屏幕文字")
                 overlayLabel?.text = text("Working", "处理中")
                 overlayButton?.alpha = 0.85f
+                startProcessingAnimation()
             }
 
             ReaderState.SPEAKING -> {
+                stopProcessingAnimation()
                 overlayButton?.setImageResource(R.drawable.ic_overlay_pause)
                 overlayButton?.contentDescription = text("Pause reading aloud", "暂停朗读")
                 overlayLabel?.text = text("Pause", "暂停")
@@ -417,12 +425,30 @@ class OverlayService : Service(),
             }
 
             ReaderState.PAUSED -> {
+                stopProcessingAnimation()
                 overlayButton?.setImageResource(R.drawable.ic_overlay_play)
                 overlayButton?.contentDescription = text("Resume reading aloud", "继续朗读")
                 overlayLabel?.text = text("Resume", "继续")
                 overlayButton?.alpha = 1.0f
             }
         }
+    }
+
+    private fun startProcessingAnimation() {
+        if (processingAnimator?.isRunning == true) return
+        val button = overlayButton ?: return
+        processingAnimator = ObjectAnimator.ofFloat(button, View.ROTATION, 0f, 360f).apply {
+            duration = PROCESSING_ROTATION_DURATION_MS
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            start()
+        }
+    }
+
+    private fun stopProcessingAnimation() {
+        processingAnimator?.cancel()
+        processingAnimator = null
+        overlayButton?.rotation = 0f
     }
 
     private fun text(english: String, chinese: String): String {
@@ -436,6 +462,7 @@ class OverlayService : Service(),
         private const val CHANNEL_ID = "screen_reader_overlay"
         private const val NOTIFICATION_ID = 1001
         private const val REDO_OCR_LONG_PRESS_MS = 1000L
+        private const val PROCESSING_ROTATION_DURATION_MS = 900L
 
         @Volatile
         var isRunning: Boolean = false

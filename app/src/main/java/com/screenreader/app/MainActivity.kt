@@ -21,6 +21,7 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.screenreader.app.llm.DEEPSEEK_CHAT_MODEL
@@ -75,6 +76,8 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     private lateinit var recognizedTextConsoleText: TextView
     private lateinit var aiResponseConsoleTitle: TextView
     private lateinit var aiResponseConsoleText: TextView
+    private var suppressOcrModeSelection = false
+    private var aiDisclosureVisible = false
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -176,17 +179,31 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         })
 
         ocrModeGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (suppressOcrModeSelection) return@setOnCheckedChangeListener
             val mode = when (checkedId) {
                 R.id.ocrFastModeButton -> OcrMode.FAST
                 R.id.ocrAiBoostModeButton -> OcrMode.AI_BOOST
                 else -> OcrMode.ACCURATE
             }
-            AppPreferences.setOcrMode(this, mode)
             if (mode == OcrMode.AI_BOOST) {
-                LlmPreferences.setProvider(this, Provider.DEEPSEEK)
-                LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+                val previousMode = AppPreferences.getOcrMode(this)
+                showAiModeDisclosure(
+                    onAccept = {
+                        LlmPreferences.setDisclosureAccepted(this, true)
+                        AppPreferences.setOcrMode(this, OcrMode.AI_BOOST)
+                        LlmPreferences.setProvider(this, Provider.DEEPSEEK)
+                        LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+                        refreshStatus()
+                    },
+                    onCancel = {
+                        setOcrModeSelection(previousMode)
+                        refreshStatus()
+                    }
+                )
+            } else {
+                AppPreferences.setOcrMode(this, mode)
+                refreshStatus()
             }
-            refreshStatus()
         }
 
         aiCorrectionCheckBox.isChecked = LlmPreferences.isEnabled(this)
@@ -339,6 +356,23 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     override fun onResume() {
         super.onResume()
         refreshStatus()
+        if (
+            AppPreferences.getOcrMode(this) == OcrMode.AI_BOOST &&
+            !LlmPreferences.hasAcceptedDisclosure(this) &&
+            !aiDisclosureVisible
+        ) {
+            showAiModeDisclosure(
+                onAccept = {
+                    LlmPreferences.setDisclosureAccepted(this, true)
+                    refreshStatus()
+                },
+                onCancel = {
+                    AppPreferences.setOcrMode(this, OcrMode.ACCURATE)
+                    setOcrModeSelection(OcrMode.ACCURATE)
+                    refreshStatus()
+                }
+            )
+        }
     }
 
     override fun onStart() {
@@ -526,14 +560,47 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     }
 
     private fun updateOcrModeSelection() {
-        val checkedId = when (AppPreferences.getOcrMode(this)) {
+        setOcrModeSelection(AppPreferences.getOcrMode(this))
+    }
+
+    private fun setOcrModeSelection(mode: OcrMode) {
+        val checkedId = when (mode) {
             OcrMode.FAST -> R.id.ocrFastModeButton
             OcrMode.ACCURATE -> R.id.ocrAccurateModeButton
             OcrMode.AI_BOOST -> R.id.ocrAiBoostModeButton
         }
         if (ocrModeGroup.checkedRadioButtonId != checkedId) {
-            ocrModeGroup.check(checkedId)
+            suppressOcrModeSelection = true
+            try {
+                ocrModeGroup.check(checkedId)
+            } finally {
+                suppressOcrModeSelection = false
+            }
         }
+    }
+
+    private fun showAiModeDisclosure(
+        onAccept: () -> Unit,
+        onCancel: () -> Unit
+    ) {
+        aiDisclosureVisible = true
+        AlertDialog.Builder(this)
+            .setTitle(text("Enable online AI correction?", "启用在线 AI 修正？"))
+            .setMessage(
+                text(
+                    "Screen text recognized by OCR will be sent to the selected third-party AI provider for correction. It may contain personal, confidential, financial, medical, or other sensitive information. The provider may process or retain submitted text under its own terms and privacy policy.\n\nAPI usage may incur charges billed by the provider to the owner of the API key. The app developer does not control provider pricing, billing, availability, data handling, or model responses and is not responsible for resulting API charges.\n\nAI output may be inaccurate, incomplete, delayed, or refused. Avoid using this mode for information you do not want transmitted online.",
+                    "OCR 识别出的屏幕文字将发送至所选的第三方在线 AI 服务商进行修正，其中可能包含个人、机密、财务、医疗或其他敏感信息。服务商可能依据其自身的条款和隐私政策处理或保存所提交的文字。\n\n调用 API 可能产生费用，并由 API Key 所有者向服务商支付。应用开发者无法控制服务商的定价、计费、可用性、数据处理方式或模型输出，也不承担由此产生的 API 费用。\n\nAI 输出可能不准确、不完整、延迟或被拒绝。请勿使用此模式处理您不希望上传到网络的信息。"
+                )
+            )
+            .setPositiveButton(text("I understand, enable", "我已了解，继续启用")) { _, _ ->
+                onAccept()
+            }
+            .setNegativeButton(text("Cancel", "取消")) { _, _ ->
+                onCancel()
+            }
+            .setOnCancelListener { onCancel() }
+            .setOnDismissListener { aiDisclosureVisible = false }
+            .show()
     }
 
     private fun updateAiModelSelection() {

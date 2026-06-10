@@ -90,7 +90,7 @@ object LlmCorrectionEngine {
         }
     }
 
-    private const val TEST_TEXT = "朝鲜完法2026年3月"
+    private const val TEST_TEXT = "你好，祝你今天生活愉快。"
     private const val LONG_TEXT_THRESHOLD = 80
     private const val MIN_CORRECTION_LENGTH_RATIO = 0.55
     private val REFUSAL_MARKERS = listOf(
