@@ -361,6 +361,29 @@
             android:textSize="16sp"
             android:visibility="gone" />
 
+        <TextView
+            android:id="@+id/aiResponseConsoleTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="AI Response"
+            android:textColor="@color/textPrimary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/aiResponseConsoleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/panel_background"
+            android:padding="16dp"
+            android:textColor="@color/textPrimary"
+            android:textIsSelectable="true"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
         <EditText
             android:id="@+id/developerPasswordInput"
             android:layout_width="match_parent"

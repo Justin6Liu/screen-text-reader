@@ -12,32 +12,55 @@ class DeepSeekProvider(
     private val config: LlmConfig
 ) : LlmProvider {
 
-    override suspend fun correctOcrText(text: String): String = withContext(Dispatchers.IO) {
-        require(config.apiKey.isNotBlank()) { "DeepSeek API key is missing." }
-        if (text.isBlank()) return@withContext text
-
-        val connection = openConnection()
-        try {
-            val body = buildRequestBody(text)
-            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
-                writer.write(body.toString())
-            }
-
-            val responseCode = connection.responseCode
-            val responseText = if (responseCode in 200..299) {
-                connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader -> reader.readText() }
-            } else {
-                connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { reader -> reader.readText() }.orEmpty()
-            }
-            if (responseCode !in 200..299) {
-                throw IllegalStateException("DeepSeek request failed: HTTP $responseCode $responseText")
-            }
-
-            parseCorrectedText(responseText).ifBlank { text }
-        } finally {
-            connection.disconnect()
-        }
+    override suspend fun correctOcrText(text: String): String {
+        return correctOcrTextWithDiagnostics(text).correctedText
     }
+
+    override suspend fun correctOcrTextWithDiagnostics(text: String): LlmProviderResponse =
+        withContext(Dispatchers.IO) {
+            require(config.apiKey.isNotBlank()) { "DeepSeek API key is missing." }
+            if (text.isBlank()) {
+                return@withContext LlmProviderResponse(
+                    correctedText = text,
+                    rawResponseBody = ""
+                )
+            }
+
+            val connection = openConnection()
+            try {
+                val body = buildRequestBody(text)
+                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(body.toString())
+                }
+
+                val responseCode = connection.responseCode
+                val responseText = if (responseCode in 200..299) {
+                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader -> reader.readText() }
+                } else {
+                    connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { reader -> reader.readText() }.orEmpty()
+                }
+                if (responseCode !in 200..299) {
+                    throw LlmProviderException(
+                        message = "DeepSeek request failed: HTTP $responseCode",
+                        rawResponseBody = responseText
+                    )
+                }
+
+                LlmProviderResponse(
+                    correctedText = parseCorrectedText(responseText).ifBlank { text },
+                    rawResponseBody = responseText
+                )
+            } catch (error: LlmProviderException) {
+                throw error
+            } catch (error: Exception) {
+                throw LlmProviderException(
+                    message = "${error.javaClass.simpleName}: ${error.message ?: "unknown network error"}",
+                    cause = error
+                )
+            } finally {
+                connection.disconnect()
+            }
+        }
 
     private fun openConnection(): HttpURLConnection {
         val baseUrl = config.baseUrl.trimEnd('/')
@@ -71,7 +94,7 @@ class DeepSeekProvider(
     }
 
     companion object {
-        private const val REQUEST_TIMEOUT_MS = 12_000
+        private const val REQUEST_TIMEOUT_MS = 120_000
 
         private const val OCR_CORRECTION_PROMPT = """
 You are an OCR correction engine.

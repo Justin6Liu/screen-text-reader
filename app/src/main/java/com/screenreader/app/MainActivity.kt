@@ -34,7 +34,7 @@ import com.screenreader.app.runtime.AppPreferences
 import com.screenreader.app.runtime.OcrMode
 import com.screenreader.app.runtime.ScreenReaderController
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
     private lateinit var statusText: TextView
     private lateinit var titleText: TextView
@@ -73,6 +73,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var aiTestConnectionButton: Button
     private lateinit var recognizedTextConsoleTitle: TextView
     private lateinit var recognizedTextConsoleText: TextView
+    private lateinit var aiResponseConsoleTitle: TextView
+    private lateinit var aiResponseConsoleText: TextView
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -120,6 +122,8 @@ class MainActivity : AppCompatActivity() {
         aiTestConnectionButton = findViewById(R.id.aiTestConnectionButton)
         recognizedTextConsoleTitle = findViewById(R.id.recognizedTextConsoleTitle)
         recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
+        aiResponseConsoleTitle = findViewById(R.id.aiResponseConsoleTitle)
+        aiResponseConsoleText = findViewById(R.id.aiResponseConsoleText)
 
         debugModeCheckBox.isChecked = AppPreferences.isOcrDebugModeEnabled(this)
         debugModeCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
@@ -337,6 +341,20 @@ class MainActivity : AppCompatActivity() {
         refreshStatus()
     }
 
+    override fun onStart() {
+        super.onStart()
+        ScreenReaderController.addStateListener(this)
+    }
+
+    override fun onStop() {
+        ScreenReaderController.removeStateListener(this)
+        super.onStop()
+    }
+
+    override fun onStateChanged(state: ScreenReaderController.ReaderState) {
+        runOnUiThread { refreshStatus() }
+    }
+
     private fun refreshStatus() {
         val overlayGranted = Settings.canDrawOverlays(this)
         val batteryIgnored = isIgnoringBatteryOptimizations()
@@ -374,9 +392,26 @@ class MainActivity : AppCompatActivity() {
         updateDeveloperControlVisibility(developerMode)
         val showConsole = developerMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
         val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
+        val showAiDetails = AppPreferences.getOcrMode(this) == OcrMode.AI_BOOST
         recognizedTextConsoleTitle.visibility = visibility
         recognizedTextConsoleText.visibility = visibility
-        recognizedTextConsoleText.text = ScreenReaderController.getLastRecognizedText()
+        recognizedTextConsoleText.text = ScreenReaderController.getLastRecognizedTextConsole(
+            showAiDetails = showAiDetails,
+            beforeLabel = text("Raw OCR text before AI:", "AI 修正前的原始 OCR 文字："),
+            afterLabel = text("Final text used for TTS:", "最终实际朗读文字：")
+        )
+        val aiConsoleVisibility = if (developerMode && showAiDetails) {
+            android.view.View.VISIBLE
+        } else {
+            android.view.View.GONE
+        }
+        aiResponseConsoleTitle.visibility = aiConsoleVisibility
+        aiResponseConsoleText.visibility = aiConsoleVisibility
+        aiResponseConsoleText.text = ScreenReaderController.getLastAiResponseText(
+            statusLabel = text("Request status:", "请求状态："),
+            responseBodyLabel = text("Raw HTTP response body:", "在线模型原始 HTTP 返回正文："),
+            emptyLabel = text("No response body received.", "未收到返回正文。")
+        )
     }
 
     private fun applyLanguage(developerMode: Boolean) {
@@ -424,6 +459,7 @@ class MainActivity : AppCompatActivity() {
         aiConfirmApiKeyButton.text = text("Confirm API Key", "确认 API Key")
         aiTestConnectionButton.text = text("Test AI Connection", "测试 AI 连接")
         recognizedTextConsoleTitle.text = text("Recognized Text", "识别文字")
+        aiResponseConsoleTitle.text = text("Raw AI Response", "AI 原始返回内容")
         developerPasswordInput.hint = text("Password", "密码")
         developerModeButton.text = if (developerMode) {
             text("Turn Off Developer Mode", "关闭开发者模式")

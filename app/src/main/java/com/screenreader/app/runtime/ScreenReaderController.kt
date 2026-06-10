@@ -36,6 +36,12 @@ object ScreenReaderController {
     @Volatile
     private var lastRecognizedText: String = "No recognized text yet."
     @Volatile
+    private var lastRawOcrText: String = "No recognized text yet."
+    @Volatile
+    private var lastAiResponseText: String = "No AI response yet."
+    @Volatile
+    private var lastAiResponseStatus: String = "AI correction has not run yet."
+    @Volatile
     private var lastRunDurationMs: Long? = null
     @Volatile
     private var currentPlayback: PlaybackSession? = null
@@ -561,10 +567,28 @@ object ScreenReaderController {
     private fun correctOcrOutputIfEnabled(output: OcrOutput): OcrOutput {
         val context = appContext ?: return output
         if (output.text.isBlank()) return output
-        if (AppPreferences.getOcrMode(context) != OcrMode.AI_BOOST) return output
-        if (!LlmPreferences.isEnabled(context)) return output
+        updateRawOcrText(output.text)
+        if (AppPreferences.getOcrMode(context) != OcrMode.AI_BOOST) {
+            updateAiResponse(
+                response = "",
+                status = "AI correction not run because AI Boost mode is not selected."
+            )
+            return output
+        }
+        if (!LlmPreferences.isEnabled(context)) {
+            updateAiResponse(
+                response = "",
+                status = "AI correction not run because AI correction is disabled."
+            )
+            return output
+        }
         updateStatus("Correcting OCR text...")
-        val correctedText = LlmCorrectionEngine.correctIfEnabled(context, output.text)
+        val correction = LlmCorrectionEngine.correctWithDetails(context, output.text)
+        updateAiResponse(
+            response = correction.rawResponse,
+            status = correction.status
+        )
+        val correctedText = correction.outputText
         if (correctedText == output.text) return output
         return OcrOutput(
             text = correctedText,
@@ -818,6 +842,35 @@ object ScreenReaderController {
 
     fun getLastRecognizedText(): String = lastRecognizedText
 
+    fun getLastRecognizedTextConsole(
+        showAiDetails: Boolean,
+        beforeLabel: String = "Before AI correction:",
+        afterLabel: String = "After AI correction / text used for reading:"
+    ): String {
+        if (!showAiDetails) return lastRecognizedText
+        return buildString {
+            appendLine(beforeLabel)
+            appendLine(lastRawOcrText)
+            appendLine()
+            appendLine(afterLabel)
+            append(lastRecognizedText)
+        }
+    }
+
+    fun getLastAiResponseText(
+        statusLabel: String = "Request status:",
+        responseBodyLabel: String = "Raw response body:",
+        emptyLabel: String = "No response body received."
+    ): String {
+        return buildString {
+            appendLine(statusLabel)
+            appendLine(lastAiResponseStatus)
+            appendLine()
+            appendLine(responseBodyLabel)
+            append(lastAiResponseText.ifBlank { emptyLabel })
+        }
+    }
+
     fun getLastRunDurationMs(): Long? = lastRunDurationMs
 
     fun reportStatus(message: String) {
@@ -880,6 +933,16 @@ object ScreenReaderController {
 
     private fun updateRecognizedText(text: String) {
         lastRecognizedText = text.ifBlank { "No text found on screen." }
+    }
+
+    private fun updateRawOcrText(text: String) {
+        lastRawOcrText = text.ifBlank { "No text found on screen." }
+    }
+
+    private fun updateAiResponse(response: String, status: String) {
+        lastAiResponseText = response.ifBlank { "No AI response text." }
+        lastAiResponseStatus = status
+        listeners.forEach { it.onStateChanged(state) }
     }
 
     private fun updateState(newState: ReaderState) {
