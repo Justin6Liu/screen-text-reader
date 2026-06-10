@@ -45,6 +45,9 @@ class OverlayService : Service(),
     private var overlayView: View? = null
     private var overlayButton: ImageButton? = null
     private var overlayLabel: TextView? = null
+    private var overlayPauseControl: LinearLayout? = null
+    private var overlayPauseButton: ImageButton? = null
+    private var overlayPauseLabel: TextView? = null
     private var overlayProgressPanel: LinearLayout? = null
     private var overlayProgressText: TextView? = null
     private var overlayProgressSeekBar: SeekBar? = null
@@ -107,6 +110,9 @@ class OverlayService : Service(),
         val view = inflater.inflate(R.layout.view_overlay_button, null)
         val button = view.findViewById<ImageButton>(R.id.overlayButton)
         val label = view.findViewById<TextView>(R.id.overlayLabel)
+        val pauseControl = view.findViewById<LinearLayout>(R.id.overlayPauseControl)
+        val pauseButton = view.findViewById<ImageButton>(R.id.overlayPauseButton)
+        val pauseLabel = view.findViewById<TextView>(R.id.overlayPauseLabel)
         val progressPanel = view.findViewById<LinearLayout>(R.id.overlayProgressPanel)
         val progressText = view.findViewById<TextView>(R.id.overlayProgressText)
         val progressSeekBar = view.findViewById<SeekBar>(R.id.overlayProgressSeekBar)
@@ -114,6 +120,7 @@ class OverlayService : Service(),
         val params = overlayParams ?: createOverlayLayoutParams()
 
         installButtonActionHandler(button, view, params)
+        installPauseActionHandler(pauseButton)
         installDragHandler(view, params)
         installProgressHandler(progressSeekBar, progressText)
 
@@ -122,6 +129,9 @@ class OverlayService : Service(),
             overlayView = view
             overlayButton = button
             overlayLabel = label
+            overlayPauseControl = pauseControl
+            overlayPauseButton = pauseButton
+            overlayPauseLabel = pauseLabel
             overlayProgressPanel = progressPanel
             overlayProgressText = progressText
             overlayProgressSeekBar = progressSeekBar
@@ -225,7 +235,14 @@ class OverlayService : Service(),
                     MotionEvent.ACTION_UP -> {
                         mainHandler.removeCallbacks(redoRead)
                         if (!moved && !longPressTriggered) {
-                            ScreenReaderController.captureAndReadAloud()
+                            if (
+                                ScreenReaderController.isSpeaking() ||
+                                ScreenReaderController.isPaused()
+                            ) {
+                                ScreenReaderController.haltReading()
+                            } else {
+                                ScreenReaderController.captureAndReadAloud()
+                            }
                         }
                         return true
                     }
@@ -238,6 +255,16 @@ class OverlayService : Service(),
                 return true
             }
         })
+    }
+
+    private fun installPauseActionHandler(button: ImageButton) {
+        button.setOnClickListener {
+            if (ScreenReaderController.isSpeaking()) {
+                ScreenReaderController.pauseSpeaking()
+            } else if (ScreenReaderController.isPaused()) {
+                ScreenReaderController.resumeSpeaking()
+            }
+        }
     }
 
     private fun createOverlayLayoutParams(): WindowManager.LayoutParams {
@@ -263,6 +290,9 @@ class OverlayService : Service(),
         overlayView = null
         overlayButton = null
         overlayLabel = null
+        overlayPauseControl = null
+        overlayPauseButton = null
+        overlayPauseLabel = null
         overlayProgressPanel = null
         overlayProgressText = null
         overlayProgressSeekBar = null
@@ -422,6 +452,7 @@ class OverlayService : Service(),
                 overlayButton?.contentDescription = text("Read screen text", "朗读屏幕文字")
                 overlayLabel?.text = text("Read", "朗读")
                 overlayButton?.alpha = 1.0f
+                overlayPauseControl?.visibility = View.GONE
             }
 
             ReaderState.PROCESSING -> {
@@ -429,23 +460,32 @@ class OverlayService : Service(),
                 overlayButton?.contentDescription = text("Recognizing screen text", "正在识别屏幕文字")
                 overlayLabel?.text = text("Working", "处理中")
                 overlayButton?.alpha = 0.85f
+                overlayPauseControl?.visibility = View.GONE
                 startProcessingAnimation()
             }
 
             ReaderState.SPEAKING -> {
                 stopProcessingAnimation()
-                overlayButton?.setImageResource(R.drawable.ic_overlay_pause)
-                overlayButton?.contentDescription = text("Pause reading aloud", "暂停朗读")
-                overlayLabel?.text = text("Pause", "暂停")
+                overlayButton?.setImageResource(R.drawable.ic_overlay_stop)
+                overlayButton?.contentDescription = text("Stop reading", "终止阅读")
+                overlayLabel?.text = text("Stop", "终止阅读")
                 overlayButton?.alpha = 1.0f
+                overlayPauseControl?.visibility = View.VISIBLE
+                overlayPauseButton?.setImageResource(R.drawable.ic_overlay_pause)
+                overlayPauseButton?.contentDescription = text("Pause reading", "暂停朗读")
+                overlayPauseLabel?.text = text("Pause", "暂停")
             }
 
             ReaderState.PAUSED -> {
                 stopProcessingAnimation()
-                overlayButton?.setImageResource(R.drawable.ic_overlay_play)
-                overlayButton?.contentDescription = text("Resume reading aloud", "继续朗读")
-                overlayLabel?.text = text("Resume", "继续")
+                overlayButton?.setImageResource(R.drawable.ic_overlay_stop)
+                overlayButton?.contentDescription = text("Stop reading", "终止阅读")
+                overlayLabel?.text = text("Stop", "终止阅读")
                 overlayButton?.alpha = 1.0f
+                overlayPauseControl?.visibility = View.VISIBLE
+                overlayPauseButton?.setImageResource(R.drawable.ic_overlay_play)
+                overlayPauseButton?.contentDescription = text("Resume reading", "继续朗读")
+                overlayPauseLabel?.text = text("Resume", "继续")
             }
         }
         updateOverlayProgress()
