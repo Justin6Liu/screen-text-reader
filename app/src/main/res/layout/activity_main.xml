@@ -333,7 +333,8 @@
             android:layout_marginTop="8dp"
             android:backgroundTint="@color/textPrimary"
             android:hint="API Key"
-            android:inputType="textPassword"
+            android:inputType="textNoSuggestions"
+            android:singleLine="true"
             android:textColor="@color/textPrimary"
             android:textColorHint="@color/textSecondary"
             android:textSize="16sp" />
@@ -452,7 +453,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:hint="@string/developer_password_hint"
-            android:inputType="numberPassword"
+            android:inputType="number"
+            android:singleLine="true"
             android:textColor="@color/textPrimary"
             android:textSize="16sp" />
 

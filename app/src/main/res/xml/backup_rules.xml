@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude
+        domain="sharedpref"
+        path="llm_config_prefs.xml" />
+    <exclude
+        domain="sharedpref"
+        path="llm_config_prefs_fallback.xml" />
+</full-backup-content>

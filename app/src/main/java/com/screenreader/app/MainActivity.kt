@@ -263,6 +263,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
         aiCorrectionCheckBox.isChecked = LlmPreferences.isEnabled(this)
         aiCorrectionCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            if (isChecked && !LlmPreferences.isSecureStorageAvailable(this)) {
+                aiCorrectionCheckBox.isChecked = false
+                showSecureStorageUnavailable()
+                return@setOnCheckedChangeListener
+            }
             LlmPreferences.setEnabled(this, isChecked)
             refreshStatus()
         }
@@ -299,7 +304,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             }
             LlmPreferences.setProvider(this, Provider.DEEPSEEK)
             LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
-            LlmPreferences.setApiKey(this, apiKey)
+            if (!LlmPreferences.setApiKey(this, apiKey)) {
+                showSecureStorageUnavailable()
+                refreshStatus()
+                return@setOnClickListener
+            }
             aiApiKeyInput.text.clear()
             Toast.makeText(this, text("API key saved.", "API Key 已保存。"), Toast.LENGTH_SHORT).show()
             refreshStatus()
@@ -537,10 +546,19 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         aiProviderText.text = text("Provider", "服务商")
         findViewById<RadioButton>(R.id.deepSeekProviderButton).text = "DeepSeek"
         aiModelText.text = text("Model", "模型")
-        aiApiKeyStatusText.text = if (LlmPreferences.hasApiKey(this)) {
-            text("API key already configured.", "API Key 已配置。")
-        } else {
-            text("API key not configured.", "API Key 未配置。")
+        aiApiKeyStatusText.text = when {
+            !LlmPreferences.isSecureStorageAvailable(this) -> {
+                text(
+                    "Secure storage unavailable. API keys cannot be saved.",
+                    "安全存储不可用，无法保存 API Key。"
+                )
+            }
+            LlmPreferences.hasApiKey(this) -> {
+                text("API key already configured.", "API Key 已配置。")
+            }
+            else -> {
+                text("API key not configured.", "API Key 未配置。")
+            }
         }
         aiApiKeyInput.hint = if (LlmPreferences.hasApiKey(this)) {
             text("Adjust/update API key", "调整/更新 API Key")
@@ -758,6 +776,9 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     }
 
     private fun aiCorrectionStatusText(): String {
+        if (!LlmPreferences.isSecureStorageAvailable(this)) {
+            return text("Unavailable: secure storage failed", "不可用：安全存储失败")
+        }
         if (AppPreferences.getOcrMode(this) != OcrMode.AI_BOOST) {
             return text("Off (AI Boost mode not selected)", "关（未选择 AI 增强模式）")
         }
@@ -768,6 +789,15 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             text("API key missing", "缺少 API Key")
         }
         return "$enabledText, $keyText"
+    }
+
+    private fun showSecureStorageUnavailable() {
+        val detail = LlmPreferences.getSecureStorageError(this).orEmpty()
+        val message = text(
+            "Secure encrypted storage is unavailable, so the API key was not saved. ${detail.ifBlank { "Check the device security/Keystore configuration." }}",
+            "安全加密存储不可用，因此 API Key 未保存。${detail.ifBlank { "请检查设备安全设置或 Android Keystore。" }}"
+        )
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private fun lastRunTimingLabel(): String {
