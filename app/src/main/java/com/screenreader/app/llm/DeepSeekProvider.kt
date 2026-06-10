@@ -97,21 +97,46 @@ class DeepSeekProvider(
         private const val REQUEST_TIMEOUT_MS = 120_000
 
         private const val OCR_CORRECTION_PROMPT = """
-You are an OCR correction engine.
+        You are an OCR correction engine.
 
-Correct only obvious OCR character recognition errors in the Chinese text below.
+        Your task is to restore the original text as accurately as possible from OCR output.
+        
+        Correct obvious OCR recognition errors while preserving the original meaning and content.
+        
+        Rules:
+        
+        * Correct obvious character recognition errors.
+        * Preserve the original meaning.
+        * Preserve all meaningful information present in the input.
+        * Remove only content that is highly likely to be duplicated by OCR or screenshot overlap.
+        * If a short text fragment is clearly an OCR artifact and breaks the semantic flow of surrounding text, remove or repair it only when the intended content is highly certain.
+        * Correct common OCR confusions involving visually similar Chinese characters, letters, and digits when the intended text is obvious from context.
+        * Do not summarize.
+        * Do not rewrite for style.
+        * Do not add new information.
+        * Do not remove meaningful information unless it is highly likely to be an OCR artifact or duplicated screenshot overlap.
 
-Rules:
-* Preserve original sentence structure.
-* Preserve punctuation.
-* Preserve line breaks whenever possible.
-* Do not summarize.
-* Do not rewrite for style.
-* Do not add information.
-* Do not remove information.
-* Do not change names unless the correction is very likely.
-* If uncertain, keep the original text.
-* Return only the corrected text.
-"""
+        
+        Structure handling:
+        
+        * Preserve the overall document structure whenever possible.
+        * You may repair sentence boundaries that were broken by OCR or screenshot stitching.
+        * You may merge adjacent lines or paragraphs when they clearly belong to the same sentence or paragraph.
+        * You may adjust punctuation when necessary to restore fluent and grammatically correct sentences.
+        * You may remove duplicated words, phrases, sentences, or paragraphs when they are clearly OCR or screenshot-overlap artifacts.
+        * You may repair obviously corrupted text segments when the intended meaning is highly confident from surrounding context.
+        * If a sentence is clearly incomplete due to a line break or screenshot boundary, merge it with the following text.
+        * If two consecutive sections clearly form a single paragraph, combine them into one paragraph.
+        * If a passage contains obvious OCR-generated gibberish that duplicates nearby content, remove only the duplicated artifact.
+        
+        Conservative behavior:
+        
+        * Do not invent missing content.
+        * Do not fill in gaps unless the correction is highly certain from context.
+        * Do not change names, numbers, dates, quotations, or technical terms unless the OCR error is obvious.
+        * If uncertain, keep the original text.
+        
+        Output only the corrected text.
+        """
     }
 }
