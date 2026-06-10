@@ -23,6 +23,12 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.screenreader.app.llm.DEEPSEEK_CHAT_MODEL
+import com.screenreader.app.llm.DEFAULT_DEEPSEEK_BASE_URL
+import com.screenreader.app.llm.DEFAULT_DEEPSEEK_MODEL
+import com.screenreader.app.llm.LlmCorrectionEngine
+import com.screenreader.app.llm.LlmPreferences
+import com.screenreader.app.llm.Provider
 import com.screenreader.app.overlay.OverlayService
 import com.screenreader.app.runtime.AppPreferences
 import com.screenreader.app.runtime.OcrMode
@@ -55,6 +61,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ocrModeTitle: TextView
     private lateinit var ocrModeGroup: RadioGroup
     private lateinit var lastRunTimingText: TextView
+    private lateinit var aiCorrectionTitle: TextView
+    private lateinit var aiCorrectionCheckBox: CheckBox
+    private lateinit var aiProviderText: TextView
+    private lateinit var aiProviderGroup: RadioGroup
+    private lateinit var aiModelText: TextView
+    private lateinit var aiModelGroup: RadioGroup
+    private lateinit var aiApiKeyStatusText: TextView
+    private lateinit var aiApiKeyInput: EditText
+    private lateinit var aiConfirmApiKeyButton: Button
+    private lateinit var aiTestConnectionButton: Button
     private lateinit var recognizedTextConsoleTitle: TextView
     private lateinit var recognizedTextConsoleText: TextView
 
@@ -92,6 +108,16 @@ class MainActivity : AppCompatActivity() {
         ocrModeTitle = findViewById(R.id.ocrModeTitle)
         ocrModeGroup = findViewById(R.id.ocrModeGroup)
         lastRunTimingText = findViewById(R.id.lastRunTimingText)
+        aiCorrectionTitle = findViewById(R.id.aiCorrectionTitle)
+        aiCorrectionCheckBox = findViewById(R.id.aiCorrectionCheckBox)
+        aiProviderText = findViewById(R.id.aiProviderText)
+        aiProviderGroup = findViewById(R.id.aiProviderGroup)
+        aiModelText = findViewById(R.id.aiModelText)
+        aiModelGroup = findViewById(R.id.aiModelGroup)
+        aiApiKeyStatusText = findViewById(R.id.aiApiKeyStatusText)
+        aiApiKeyInput = findViewById(R.id.aiApiKeyInput)
+        aiConfirmApiKeyButton = findViewById(R.id.aiConfirmApiKeyButton)
+        aiTestConnectionButton = findViewById(R.id.aiTestConnectionButton)
         recognizedTextConsoleTitle = findViewById(R.id.recognizedTextConsoleTitle)
         recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
 
@@ -152,7 +178,78 @@ class MainActivity : AppCompatActivity() {
                 else -> OcrMode.ACCURATE
             }
             AppPreferences.setOcrMode(this, mode)
+            if (mode == OcrMode.AI_BOOST) {
+                LlmPreferences.setProvider(this, Provider.DEEPSEEK)
+                LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+            }
             refreshStatus()
+        }
+
+        aiCorrectionCheckBox.isChecked = LlmPreferences.isEnabled(this)
+        aiCorrectionCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
+            LlmPreferences.setEnabled(this, isChecked)
+            refreshStatus()
+        }
+
+        val llmConfig = LlmPreferences.getConfig(this)
+        aiApiKeyInput.setText("")
+        aiProviderGroup.check(R.id.deepSeekProviderButton)
+        aiProviderGroup.setOnCheckedChangeListener { _, _ ->
+            LlmPreferences.setProvider(this, Provider.DEEPSEEK)
+            LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+            refreshStatus()
+        }
+        aiModelGroup.check(
+            if (llmConfig.model == DEEPSEEK_CHAT_MODEL) {
+                R.id.deepSeekChatModelButton
+            } else {
+                R.id.deepSeekFlashModelButton
+            }
+        )
+        aiModelGroup.setOnCheckedChangeListener { _, checkedId ->
+            LlmPreferences.setProvider(this, Provider.DEEPSEEK)
+            LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+            LlmPreferences.setModel(
+                this,
+                if (checkedId == R.id.deepSeekChatModelButton) DEEPSEEK_CHAT_MODEL else DEFAULT_DEEPSEEK_MODEL
+            )
+            refreshStatus()
+        }
+        aiConfirmApiKeyButton.setOnClickListener {
+            val apiKey = aiApiKeyInput.text.toString().trim()
+            if (apiKey.isBlank()) {
+                Toast.makeText(this, text("Enter an API key first.", "请先输入 API Key。"), Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            LlmPreferences.setProvider(this, Provider.DEEPSEEK)
+            LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+            LlmPreferences.setApiKey(this, apiKey)
+            aiApiKeyInput.text.clear()
+            Toast.makeText(this, text("API key saved.", "API Key 已保存。"), Toast.LENGTH_SHORT).show()
+            refreshStatus()
+        }
+        aiTestConnectionButton.setOnClickListener {
+            Toast.makeText(this, text("Testing AI connection...", "正在测试 AI 连接..."), Toast.LENGTH_SHORT).show()
+            Thread {
+                val result = LlmCorrectionEngine.testConnection(applicationContext)
+                runOnUiThread {
+                    val message = result.fold(
+                        onSuccess = { corrected ->
+                            text(
+                                "AI connection works. Result: $corrected",
+                                "AI 连接成功。结果：$corrected"
+                            )
+                        },
+                        onFailure = { error ->
+                            text(
+                                "AI connection failed: ${error.message ?: "unknown error"}",
+                                "AI 连接失败：${error.message ?: "未知错误"}"
+                            )
+                        }
+                    )
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }.start()
         }
 
         developerModeButton.setOnClickListener {
@@ -248,6 +345,7 @@ class MainActivity : AppCompatActivity() {
         val developerMode = AppPreferences.isDeveloperModeEnabled(this)
         applyLanguage(developerMode)
         updateOcrModeSelection()
+        updateAiModelSelection()
 
         statusText.text = buildString {
             appendLine(text("Device Status", "设备状态"))
@@ -266,7 +364,8 @@ class MainActivity : AppCompatActivity() {
                 appendLine("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
                 appendLine("${text("Auto scroll capture", "自动滚动整图识别")}: ${onOffText(AppPreferences.isAutoScrollCaptureEnabled(this@MainActivity))}")
                 appendLine("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
-                append("${text("OCR mode", "OCR 模式")}: ${ocrModeLabel(AppPreferences.getOcrMode(this@MainActivity))}")
+                appendLine("${text("OCR mode", "OCR 模式")}: ${ocrModeLabel(AppPreferences.getOcrMode(this@MainActivity))}")
+                append("${text("AI correction", "AI 修正")}: ${aiCorrectionStatusText()}")
             }
         }
 
@@ -304,7 +403,26 @@ class MainActivity : AppCompatActivity() {
         ocrModeTitle.text = text("OCR Mode", "OCR 模式")
         findViewById<RadioButton>(R.id.ocrFastModeButton).text = text("Fast", "快速")
         findViewById<RadioButton>(R.id.ocrAccurateModeButton).text = text("Accurate", "准确")
-        findViewById<RadioButton>(R.id.ocrAiBoostModeButton).text = text("AI Boost (placeholder)", "AI 增强（占位）")
+        findViewById<RadioButton>(R.id.ocrAiBoostModeButton).text = text("AI Boost", "AI 增强")
+        aiCorrectionTitle.text = text("AI Correction", "AI 修正")
+        aiCorrectionCheckBox.text = text("Enable AI correction", "启用 AI 修正")
+        aiProviderText.text = text("Provider", "服务商")
+        findViewById<RadioButton>(R.id.deepSeekProviderButton).text = "DeepSeek"
+        aiModelText.text = text("Model", "模型")
+        aiApiKeyStatusText.text = if (LlmPreferences.hasApiKey(this)) {
+            text("API key already configured.", "API Key 已配置。")
+        } else {
+            text("API key not configured.", "API Key 未配置。")
+        }
+        aiApiKeyInput.hint = if (LlmPreferences.hasApiKey(this)) {
+            text("Adjust/update API key", "调整/更新 API Key")
+        } else {
+            text("API Key", "API Key")
+        }
+        findViewById<RadioButton>(R.id.deepSeekFlashModelButton).text = DEFAULT_DEEPSEEK_MODEL
+        findViewById<RadioButton>(R.id.deepSeekChatModelButton).text = DEEPSEEK_CHAT_MODEL
+        aiConfirmApiKeyButton.text = text("Confirm API Key", "确认 API Key")
+        aiTestConnectionButton.text = text("Test AI Connection", "测试 AI 连接")
         recognizedTextConsoleTitle.text = text("Recognized Text", "识别文字")
         developerPasswordInput.hint = text("Password", "密码")
         developerModeButton.text = if (developerMode) {
@@ -321,6 +439,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateDeveloperControlVisibility(developerMode: Boolean) {
         val developerVisibility = if (developerMode) android.view.View.VISIBLE else android.view.View.GONE
+        val aiVisibility = if (
+            developerMode &&
+            AppPreferences.getOcrMode(this) == OcrMode.AI_BOOST
+        ) {
+            android.view.View.VISIBLE
+        } else {
+            android.view.View.GONE
+        }
         debugModeCheckBox.visibility = developerVisibility
         saveDebugScreenshotsCheckBox.visibility = developerVisibility
         recognizedTextConsoleCheckBox.visibility = developerVisibility
@@ -331,6 +457,16 @@ class MainActivity : AppCompatActivity() {
         ocrModeTitle.visibility = developerVisibility
         ocrModeGroup.visibility = developerVisibility
         lastRunTimingText.visibility = developerVisibility
+        aiCorrectionTitle.visibility = aiVisibility
+        aiCorrectionCheckBox.visibility = aiVisibility
+        aiProviderText.visibility = aiVisibility
+        aiProviderGroup.visibility = aiVisibility
+        aiModelText.visibility = aiVisibility
+        aiModelGroup.visibility = aiVisibility
+        aiApiKeyStatusText.visibility = aiVisibility
+        aiApiKeyInput.visibility = aiVisibility
+        aiConfirmApiKeyButton.visibility = aiVisibility
+        aiTestConnectionButton.visibility = aiVisibility
         languageSwitchButton.visibility = developerVisibility
         overlayPermissionButton.visibility = developerVisibility
         accessibilityButton.visibility = developerVisibility
@@ -364,12 +500,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateAiModelSelection() {
+        val model = LlmPreferences.getConfig(this).model
+        val checkedId = if (model == DEEPSEEK_CHAT_MODEL) {
+            R.id.deepSeekChatModelButton
+        } else {
+            R.id.deepSeekFlashModelButton
+        }
+        if (aiModelGroup.checkedRadioButtonId != checkedId) {
+            aiModelGroup.check(checkedId)
+        }
+    }
+
     private fun ocrModeLabel(mode: OcrMode): String {
         return when (mode) {
             OcrMode.FAST -> text("Fast", "快速")
             OcrMode.ACCURATE -> text("Accurate", "准确")
-            OcrMode.AI_BOOST -> text("AI Boost placeholder", "AI 增强占位")
+            OcrMode.AI_BOOST -> text("AI Boost", "AI 增强")
         }
+    }
+
+    private fun aiCorrectionStatusText(): String {
+        if (AppPreferences.getOcrMode(this) != OcrMode.AI_BOOST) {
+            return text("Off (AI Boost mode not selected)", "关（未选择 AI 增强模式）")
+        }
+        val enabledText = onOffText(LlmPreferences.isEnabled(this))
+        val keyText = if (LlmPreferences.hasApiKey(this)) {
+            text("API key configured", "API Key 已配置")
+        } else {
+            text("API key missing", "缺少 API Key")
+        }
+        return "$enabledText, $keyText"
     }
 
     private fun lastRunTimingLabel(): String {
@@ -396,6 +557,7 @@ class MainActivity : AppCompatActivity() {
             status.startsWith("Reading halted") -> "朗读已终止。"
             status.startsWith("Capturing screen") -> "正在截取屏幕..."
             status.startsWith("Recognizing text") -> "正在识别文字..."
+            status.startsWith("Correcting OCR text") -> "正在进行 AI 文字修正..."
             status.startsWith("Reading aloud") -> "正在朗读..."
             status.startsWith("Ready for the next read") -> "已完成，可以再次朗读。"
             status.startsWith("No text found") -> "没有识别到文字。"

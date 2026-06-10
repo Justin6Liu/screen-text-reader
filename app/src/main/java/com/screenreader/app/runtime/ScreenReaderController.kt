@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import com.screenreader.app.llm.LlmCorrectionEngine
+import com.screenreader.app.llm.LlmPreferences
 import com.screenreader.app.ocr.OcrDebugSnapshot
 import com.screenreader.app.accessibility.ReaderAccessibilityService
 import com.screenreader.app.ocr.OcrOutput
@@ -241,7 +243,7 @@ object ScreenReaderController {
             runCatching { future.get() }.getOrNull()?.copy(captureCount = captureCount)
         }
 
-        val output = combineScrollableOutputs(outputs)
+        val output = correctOcrOutputIfEnabled(combineScrollableOutputs(outputs))
         updateRecognizedText(output.text)
         if (output.text.isBlank()) {
             finishWithStatus("No text found on screen.")
@@ -531,14 +533,15 @@ object ScreenReaderController {
             bitmap.recycle()
             result
                 ?.onSuccess { output ->
-                    maybeEmitDebugSnapshot(output.debugSnapshot)
-                    updateRecognizedText(output.text)
-                    if (output.text.isBlank()) {
+                    val correctedOutput = correctOcrOutputIfEnabled(output)
+                    maybeEmitDebugSnapshot(correctedOutput.debugSnapshot)
+                    updateRecognizedText(correctedOutput.text)
+                    if (correctedOutput.text.isBlank()) {
                         finishWithStatus("No text found on screen.")
                     } else {
                         updateStatus("Reading aloud...")
                         recordLastRunDuration(processingStartMs)
-                        val started = speakOcrOutput(output)
+                        val started = speakOcrOutput(correctedOutput)
                         if (!started) {
                             finishWithStatus("Speech is not ready yet.")
                         }
@@ -553,6 +556,65 @@ object ScreenReaderController {
     private fun currentOcrMode(): OcrMode {
         val context = appContext ?: return OcrMode.ACCURATE
         return AppPreferences.getOcrMode(context)
+    }
+
+    private fun correctOcrOutputIfEnabled(output: OcrOutput): OcrOutput {
+        val context = appContext ?: return output
+        if (output.text.isBlank()) return output
+        if (AppPreferences.getOcrMode(context) != OcrMode.AI_BOOST) return output
+        if (!LlmPreferences.isEnabled(context)) return output
+        updateStatus("Correcting OCR text...")
+        val correctedText = LlmCorrectionEngine.correctIfEnabled(context, output.text)
+        if (correctedText == output.text) return output
+        return OcrOutput(
+            text = correctedText,
+            debugSnapshot = output.debugSnapshot,
+            readSegments = correctedText.toCorrectionReadSegments()
+        )
+    }
+
+    private fun String.toCorrectionReadSegments(): List<OcrReadSegment> {
+        if (isBlank()) return emptyList()
+
+        val segments = mutableListOf<OcrReadSegment>()
+        var start = 0
+        var index = 0
+        while (index < length) {
+            val char = this[index]
+            val shouldBreak =
+                char == '\n' ||
+                    char in CORRECTED_TEXT_BREAK_CHARS ||
+                    index - start + 1 >= CORRECTED_TEXT_SEGMENT_CHARS
+            if (shouldBreak) {
+                addCorrectionSegment(start, index + 1, segments)
+                start = index + 1
+                while (start < length && this[start].isWhitespace()) {
+                    start++
+                }
+                index = start
+            } else {
+                index++
+            }
+        }
+        addCorrectionSegment(start, length, segments)
+        return segments
+    }
+
+    private fun String.addCorrectionSegment(
+        start: Int,
+        end: Int,
+        segments: MutableList<OcrReadSegment>
+    ) {
+        val safeStart = start.coerceIn(0, length)
+        val safeEnd = end.coerceIn(safeStart, length)
+        val text = substring(safeStart, safeEnd).trim()
+        if (text.isBlank()) return
+        segments += OcrReadSegment(
+            text = text,
+            bounds = Rect(0, 0, 0, 0),
+            startIndex = safeStart,
+            endIndex = safeEnd
+        )
     }
 
     private fun recordLastRunDuration(startTimeMs: Long) {
@@ -870,6 +932,7 @@ object ScreenReaderController {
 
         val baseSnapshot = output.debugSnapshot ?: return
         val activeSegment = output.readSegments.findBestSegment(start, end) ?: return
+        if (activeSegment.bounds.isEmpty()) return
         val includeDebugBoxes = AppPreferences.isOcrDebugModeEnabled(context)
         emitDebugSnapshot(
             OcrDebugSnapshot(
@@ -890,6 +953,7 @@ object ScreenReaderController {
         if (AppPreferences.isAutoScrollCaptureEnabled(context)) return
 
         val baseSnapshot = output.debugSnapshot ?: return
+        if (activeSegment.bounds.isEmpty()) return
         val includeDebugBoxes = AppPreferences.isOcrDebugModeEnabled(context)
         emitDebugSnapshot(
             OcrDebugSnapshot(
@@ -993,6 +1057,7 @@ object ScreenReaderController {
     }
 
     private val SCROLLABLE_TEXT_BREAK_CHARS = setOf('。', '！', '？', '.', '!', '?', '；', ';')
+    private val CORRECTED_TEXT_BREAK_CHARS = setOf('。', '！', '？', '.', '!', '?', '；', ';')
     private val CJK_UNIFIED_IDEOGRAPHS = 0x4E00..0x9FFF
 
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
@@ -1029,4 +1094,5 @@ object ScreenReaderController {
     private const val SCROLLABLE_SHORT_TEXT_LENGTH = 8
     private const val SCROLLABLE_SAFE_EDGE_RATIO = 0.12f
     private const val SCROLLABLE_SAFE_EDGE_MIN_PX = 120
+    private const val CORRECTED_TEXT_SEGMENT_CHARS = 120
 }

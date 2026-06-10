@@ -179,6 +179,117 @@
             android:textColor="@color/textPrimary"
             android:textSize="16sp" />
 
+        <TextView
+            android:id="@+id/aiCorrectionTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="AI Correction"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <CheckBox
+            android:id="@+id/aiCorrectionCheckBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Enable AI correction"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/aiProviderText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Provider"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <RadioGroup
+            android:id="@+id/aiProviderGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/deepSeekProviderButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="DeepSeek"
+                android:textColor="@color/textPrimary"
+                android:textSize="16sp" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/aiModelText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Model"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <RadioGroup
+            android:id="@+id/aiModelGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/deepSeekFlashModelButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="deepseek-v4-flash"
+                android:textColor="@color/textPrimary"
+                android:textSize="16sp" />
+
+            <RadioButton
+                android:id="@+id/deepSeekChatModelButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="deepseek-chat"
+                android:textColor="@color/textPrimary"
+                android:textSize="16sp" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/aiApiKeyStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="API key not configured"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/aiApiKeyInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="API Key"
+            android:inputType="textPassword"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/aiConfirmApiKeyButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Confirm API Key" />
+
+        <Button
+            android:id="@+id/aiTestConnectionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Test AI Connection" />
+
         <Button
             android:id="@+id/languageSwitchButton"
             android:layout_width="match_parent"
