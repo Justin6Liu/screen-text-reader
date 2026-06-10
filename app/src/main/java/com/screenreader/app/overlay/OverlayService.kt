@@ -23,6 +23,8 @@ import android.view.View
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
 import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -43,10 +45,14 @@ class OverlayService : Service(),
     private var overlayView: View? = null
     private var overlayButton: ImageButton? = null
     private var overlayLabel: TextView? = null
+    private var overlayProgressPanel: LinearLayout? = null
+    private var overlayProgressText: TextView? = null
+    private var overlayProgressSeekBar: SeekBar? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayHiddenForCapture = false
     private var debugOverlayView: OcrDebugOverlayView? = null
     private var processingAnimator: ObjectAnimator? = null
+    private var isSeekingPlayback = false
 
     private val clearDebugOverlay = Runnable {
         hideDebugOverlay()
@@ -101,17 +107,24 @@ class OverlayService : Service(),
         val view = inflater.inflate(R.layout.view_overlay_button, null)
         val button = view.findViewById<ImageButton>(R.id.overlayButton)
         val label = view.findViewById<TextView>(R.id.overlayLabel)
+        val progressPanel = view.findViewById<LinearLayout>(R.id.overlayProgressPanel)
+        val progressText = view.findViewById<TextView>(R.id.overlayProgressText)
+        val progressSeekBar = view.findViewById<SeekBar>(R.id.overlayProgressSeekBar)
 
         val params = overlayParams ?: createOverlayLayoutParams()
 
         installButtonActionHandler(button, view, params)
         installDragHandler(view, params)
+        installProgressHandler(progressSeekBar, progressText)
 
         try {
             windowManager.addView(view, params)
             overlayView = view
             overlayButton = button
             overlayLabel = label
+            overlayProgressPanel = progressPanel
+            overlayProgressText = progressText
+            overlayProgressSeekBar = progressSeekBar
             overlayParams = params
             updateOverlayUi(
                 if (ScreenReaderController.isSpeaking()) ReaderState.SPEAKING
@@ -250,6 +263,9 @@ class OverlayService : Service(),
         overlayView = null
         overlayButton = null
         overlayLabel = null
+        overlayProgressPanel = null
+        overlayProgressText = null
+        overlayProgressSeekBar = null
     }
 
     private fun hideOverlayForCapture() {
@@ -432,6 +448,73 @@ class OverlayService : Service(),
                 overlayButton?.alpha = 1.0f
             }
         }
+        updateOverlayProgress()
+    }
+
+    private fun installProgressHandler(seekBar: SeekBar, progressText: TextView) {
+        seekBar.max = ScreenReaderController.PLAYBACK_PROGRESS_MAX
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val playback = ScreenReaderController.getPlaybackProgress() ?: return
+                val target = progressToSegment(progress, playback.totalSegments)
+                progressText.text = playbackPositionText(target, playback.totalSegments)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                isSeekingPlayback = true
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: return
+                isSeekingPlayback = false
+                ScreenReaderController.seekToPlaybackProgress(progress)
+                updateOverlayProgress()
+            }
+        })
+    }
+
+    private fun updateOverlayProgress() {
+        val playback = ScreenReaderController.getPlaybackProgress()
+        val visible = playback != null &&
+            (ScreenReaderController.isSpeaking() || ScreenReaderController.isPaused())
+        overlayProgressPanel?.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible || playback == null || isSeekingPlayback) return
+
+        overlayProgressSeekBar?.progress = segmentToProgress(
+            playback.currentSegment,
+            playback.totalSegments
+        )
+        overlayProgressText?.text = playbackPositionText(
+            playback.currentSegment,
+            playback.totalSegments
+        )
+    }
+
+    private fun segmentToProgress(currentSegment: Int, totalSegments: Int): Int {
+        if (totalSegments <= 1) return 0
+        return (
+            currentSegment.coerceIn(0, totalSegments - 1).toFloat() /
+                (totalSegments - 1).toFloat() *
+                ScreenReaderController.PLAYBACK_PROGRESS_MAX
+            ).toInt()
+    }
+
+    private fun progressToSegment(progress: Int, totalSegments: Int): Int {
+        if (totalSegments <= 1) return 0
+        return (
+            progress.coerceIn(0, ScreenReaderController.PLAYBACK_PROGRESS_MAX).toFloat() /
+                ScreenReaderController.PLAYBACK_PROGRESS_MAX.toFloat() *
+                (totalSegments - 1)
+            ).toInt()
+    }
+
+    private fun playbackPositionText(currentSegment: Int, totalSegments: Int): String {
+        val current = (currentSegment + 1).coerceAtMost(totalSegments)
+        return text(
+            "Reading $current / $totalSegments",
+            "朗读进度 $current / $totalSegments"
+        )
     }
 
     private fun startProcessingAnimation() {

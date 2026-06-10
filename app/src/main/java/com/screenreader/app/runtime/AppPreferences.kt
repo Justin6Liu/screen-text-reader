@@ -15,6 +15,7 @@ object AppPreferences {
     private const val KEY_AUTO_SCROLL_CAPTURE = "auto_scroll_capture"
     private const val KEY_AUTO_SCROLL_MAX_CAPTURES = "auto_scroll_max_captures"
     private const val KEY_OCR_MODE = "ocr_mode"
+    private const val KEY_SPEECH_RATE = "speech_rate"
 
     fun isOcrDebugModeEnabled(context: Context): Boolean {
         return prefs(context).getBoolean(KEY_OCR_DEBUG_MODE, false)
@@ -104,12 +105,27 @@ object AppPreferences {
         prefs(context).edit().putString(KEY_OCR_MODE, mode.name).apply()
     }
 
+    fun getSpeechRate(context: Context): Float {
+        return prefs(context)
+            .getFloat(KEY_SPEECH_RATE, DEFAULT_SPEECH_RATE)
+            .coerceIn(MIN_SPEECH_RATE, MAX_SPEECH_RATE)
+    }
+
+    fun setSpeechRate(context: Context, rate: Float) {
+        prefs(context).edit()
+            .putFloat(KEY_SPEECH_RATE, rate.coerceIn(MIN_SPEECH_RATE, MAX_SPEECH_RATE))
+            .apply()
+    }
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     const val DEFAULT_AUTO_SCROLL_MAX_CAPTURES = 12
     const val MIN_AUTO_SCROLL_MAX_CAPTURES = 1
     const val MAX_AUTO_SCROLL_MAX_CAPTURES = 15
+    const val DEFAULT_SPEECH_RATE = 1.0f
+    const val MIN_SPEECH_RATE = 0.5f
+    const val MAX_SPEECH_RATE = 3.0f
 }
 
 enum class OcrMode {

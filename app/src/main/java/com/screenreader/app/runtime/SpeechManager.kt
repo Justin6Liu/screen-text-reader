@@ -44,6 +44,8 @@ class SpeechManager(
     private var finalUtteranceId: String? = null
     @Volatile
     private var pendingRetry: (() -> Unit)? = null
+    @Volatile
+    private var currentSpeechRate: Float = AppPreferences.getSpeechRate(context)
 
     private val sequenceCounter = AtomicInteger(0)
 
@@ -98,6 +100,9 @@ class SpeechManager(
                 }
             })
             ready = configureBestChineseLocale()
+            if (ready) {
+                applySpeechRate(AppPreferences.getSpeechRate(context))
+            }
             onStatusChanged(
                 if (ready) {
                     "Chinese speech ready. Engine: $engineLabel. Locale: ${selectedLocale?.toLanguageTag() ?: "unknown"}"
@@ -161,6 +166,7 @@ class SpeechManager(
         )
 
         tts.stop()
+        applySpeechRateTo(tts)
         currentRangeListener = onRangeStart
         currentSegmentStartListener = null
         finalUtteranceId = SINGLE_UTTERANCE_ID
@@ -211,6 +217,7 @@ class SpeechManager(
         )
 
         tts.stop()
+        applySpeechRateTo(tts)
         currentRangeListener = null
         currentSegmentStartListener = onSegmentStart
 
@@ -278,6 +285,7 @@ class SpeechManager(
         )
 
         tts.stop()
+        applySpeechRateTo(tts)
         currentRangeListener = null
         currentSegmentStartListener = onSegmentStart
 
@@ -316,6 +324,30 @@ class SpeechManager(
     fun pausePlayback() {
         clearSpeechCallbacks()
         textToSpeech?.stop()
+    }
+
+    fun setSpeechRate(rate: Float): Boolean {
+        currentSpeechRate = rate.coerceIn(
+            AppPreferences.MIN_SPEECH_RATE,
+            AppPreferences.MAX_SPEECH_RATE
+        )
+        return applySpeechRate(currentSpeechRate)
+    }
+
+    private fun applySpeechRate(rate: Float): Boolean {
+        val tts = textToSpeech ?: return false
+        return applySpeechRateTo(tts, rate)
+    }
+
+    private fun applySpeechRateTo(
+        tts: TextToSpeech,
+        rate: Float = currentSpeechRate
+    ): Boolean {
+        val result = tts.setSpeechRate(rate)
+        if (result != TextToSpeech.SUCCESS) {
+            onStatusChanged("Speech engine rejected speed ${"%.1f".format(rate)}x. Engine: $engineLabel")
+        }
+        return result == TextToSpeech.SUCCESS
     }
 
     private fun clearSpeechCallbacks() {

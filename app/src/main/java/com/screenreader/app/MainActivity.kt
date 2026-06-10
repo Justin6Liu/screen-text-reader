@@ -16,8 +16,10 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.CompoundButton
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +48,13 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     private lateinit var batteryButton: Button
     private lateinit var startOverlayButton: Button
     private lateinit var stopOverlayButton: Button
+    private lateinit var speechRateTitle: TextView
+    private lateinit var speechRateValueText: TextView
+    private lateinit var speechRateSeekBar: SeekBar
+    private lateinit var playbackProgressPanel: LinearLayout
+    private lateinit var playbackProgressTitle: TextView
+    private lateinit var playbackProgressText: TextView
+    private lateinit var playbackProgressSeekBar: SeekBar
     private lateinit var stopSpeechButton: Button
     private lateinit var testReadButton: Button
     private lateinit var testReadNoResetButton: Button
@@ -78,6 +87,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     private lateinit var aiResponseConsoleText: TextView
     private var suppressOcrModeSelection = false
     private var aiDisclosureVisible = false
+    private var isSeekingPlayback = false
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
@@ -97,6 +107,13 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         batteryButton = findViewById(R.id.batteryButton)
         startOverlayButton = findViewById(R.id.startOverlayButton)
         stopOverlayButton = findViewById(R.id.stopOverlayButton)
+        speechRateTitle = findViewById(R.id.speechRateTitle)
+        speechRateValueText = findViewById(R.id.speechRateValueText)
+        speechRateSeekBar = findViewById(R.id.speechRateSeekBar)
+        playbackProgressPanel = findViewById(R.id.playbackProgressPanel)
+        playbackProgressTitle = findViewById(R.id.playbackProgressTitle)
+        playbackProgressText = findViewById(R.id.playbackProgressText)
+        playbackProgressSeekBar = findViewById(R.id.playbackProgressSeekBar)
         stopSpeechButton = findViewById(R.id.stopSpeechButton)
         testReadButton = findViewById(R.id.testReadButton)
         testReadNoResetButton = findViewById(R.id.testReadNoResetButton)
@@ -127,6 +144,44 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         recognizedTextConsoleText = findViewById(R.id.recognizedTextConsoleText)
         aiResponseConsoleTitle = findViewById(R.id.aiResponseConsoleTitle)
         aiResponseConsoleText = findViewById(R.id.aiResponseConsoleText)
+
+        speechRateSeekBar.max = SPEECH_RATE_SLIDER_MAX
+        speechRateSeekBar.progress = speechRateToSlider(AppPreferences.getSpeechRate(this))
+        speechRateSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                speechRateValueText.text = speechRateLabel(sliderToSpeechRate(progress))
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                ScreenReaderController.setSpeechRate(
+                    sliderToSpeechRate(seekBar?.progress ?: speechRateSeekBar.progress)
+                )
+                refreshStatus()
+            }
+        })
+
+        playbackProgressSeekBar.max = ScreenReaderController.PLAYBACK_PROGRESS_MAX
+        playbackProgressSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val playback = ScreenReaderController.getPlaybackProgress() ?: return
+                val target = progressToSegment(progress, playback.totalSegments)
+                playbackProgressText.text = playbackPositionLabel(target, playback.totalSegments)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                isSeekingPlayback = true
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: playbackProgressSeekBar.progress
+                isSeekingPlayback = false
+                ScreenReaderController.seekToPlaybackProgress(progress)
+                refreshStatus()
+            }
+        })
 
         debugModeCheckBox.isChecked = AppPreferences.isOcrDebugModeEnabled(this)
         debugModeCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
@@ -422,6 +477,8 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         }
 
         speechStatusText.text = localizeStatus(ScreenReaderController.getUiStatus())
+        updateSpeechRateControl()
+        updatePlaybackProgressControl()
         lastRunTimingText.text = lastRunTimingLabel()
         updateDeveloperControlVisibility(developerMode)
         val showConsole = developerMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
@@ -459,6 +516,8 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         batteryButton.text = text("Open Battery Settings", "打开电池设置")
         startOverlayButton.text = text("Start Floating Button", "启动悬浮按钮")
         stopOverlayButton.text = text("Stop Floating Button", "关闭悬浮按钮")
+        speechRateTitle.text = text("Speech speed", "朗读速度")
+        playbackProgressTitle.text = text("Reading progress", "朗读进度")
         testReadButton.text = text("Test Chinese Speech", "测试中文朗读")
         testReadNoResetButton.text = text("Test Speech Without Engine Reset", "测试朗读（不重置语音引擎）")
         stopSpeechButton.text = text("Stop Speech", "停止朗读")
@@ -557,6 +616,81 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
     private fun readyText(enabled: Boolean): String {
         return if (enabled) text("Ready", "已就绪") else text("Missing", "未授予")
+    }
+
+    private fun updateSpeechRateControl() {
+        val rate = AppPreferences.getSpeechRate(this)
+        val progress = speechRateToSlider(rate)
+        if (!speechRateSeekBar.isPressed && speechRateSeekBar.progress != progress) {
+            speechRateSeekBar.progress = progress
+        }
+        speechRateValueText.text = speechRateLabel(rate)
+    }
+
+    private fun updatePlaybackProgressControl() {
+        val playback = ScreenReaderController.getPlaybackProgress()
+        val visible = playback != null &&
+            (ScreenReaderController.isSpeaking() || ScreenReaderController.isPaused())
+        playbackProgressPanel.visibility = if (visible) android.view.View.VISIBLE else android.view.View.GONE
+        if (!visible || playback == null) return
+
+        if (!isSeekingPlayback) {
+            playbackProgressSeekBar.progress = segmentToProgress(
+                playback.currentSegment,
+                playback.totalSegments
+            )
+            playbackProgressText.text = playbackPositionLabel(
+                playback.currentSegment,
+                playback.totalSegments
+            )
+        }
+    }
+
+    private fun speechRateToSlider(rate: Float): Int {
+        val range = AppPreferences.MAX_SPEECH_RATE - AppPreferences.MIN_SPEECH_RATE
+        return (((rate - AppPreferences.MIN_SPEECH_RATE) / range) * SPEECH_RATE_SLIDER_MAX)
+            .toInt()
+            .coerceIn(0, SPEECH_RATE_SLIDER_MAX)
+    }
+
+    private fun sliderToSpeechRate(progress: Int): Float {
+        val fraction = progress.coerceIn(0, SPEECH_RATE_SLIDER_MAX).toFloat() /
+            SPEECH_RATE_SLIDER_MAX.toFloat()
+        return AppPreferences.MIN_SPEECH_RATE +
+            fraction * (AppPreferences.MAX_SPEECH_RATE - AppPreferences.MIN_SPEECH_RATE)
+    }
+
+    private fun speechRateLabel(rate: Float): String {
+        return text(
+            "Current speed: %.1fx".format(rate),
+            "当前速度：%.1fx".format(rate)
+        )
+    }
+
+    private fun segmentToProgress(currentSegment: Int, totalSegments: Int): Int {
+        if (totalSegments <= 1) return 0
+        return (
+            currentSegment.coerceIn(0, totalSegments - 1).toFloat() /
+                (totalSegments - 1).toFloat() *
+                ScreenReaderController.PLAYBACK_PROGRESS_MAX
+            ).toInt()
+    }
+
+    private fun progressToSegment(progress: Int, totalSegments: Int): Int {
+        if (totalSegments <= 1) return 0
+        return (
+            progress.coerceIn(0, ScreenReaderController.PLAYBACK_PROGRESS_MAX).toFloat() /
+                ScreenReaderController.PLAYBACK_PROGRESS_MAX.toFloat() *
+                (totalSegments - 1)
+            ).toInt()
+    }
+
+    private fun playbackPositionLabel(currentSegment: Int, totalSegments: Int): String {
+        val current = (currentSegment + 1).coerceAtMost(totalSegments)
+        return text(
+            "Phrase $current of $totalSegments. Drag to choose where to continue.",
+            "第 $current / $totalSegments 段。拖动可选择继续朗读的位置。"
+        )
     }
 
     private fun updateOcrModeSelection() {
@@ -694,5 +828,6 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
     private companion object {
         private const val DEVELOPER_PASSWORD = "12345678"
+        private const val SPEECH_RATE_SLIDER_MAX = 100
     }
 }

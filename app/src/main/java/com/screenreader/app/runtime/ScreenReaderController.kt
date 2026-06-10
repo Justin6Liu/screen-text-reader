@@ -831,6 +831,46 @@ object ScreenReaderController {
         }
     }
 
+    fun getPlaybackProgress(): PlaybackProgress? {
+        val playback = currentPlayback ?: return null
+        val total = playback.segmentTexts.size
+        if (total <= 0) return null
+        return PlaybackProgress(
+            currentSegment = playback.currentSegmentIndex.coerceIn(0, total - 1),
+            totalSegments = total
+        )
+    }
+
+    fun seekToPlaybackProgress(progress: Int, maxProgress: Int = PLAYBACK_PROGRESS_MAX) {
+        val playback = currentPlayback ?: return
+        if (playback.segmentTexts.isEmpty() || state == ReaderState.PROCESSING) return
+        val safeMax = maxProgress.coerceAtLeast(1)
+        val fraction = progress.coerceIn(0, safeMax).toFloat() / safeMax.toFloat()
+        val targetIndex = (fraction * playback.segmentTexts.lastIndex)
+            .toInt()
+            .coerceIn(0, playback.segmentTexts.lastIndex)
+        playback.currentSegmentIndex = targetIndex
+        pausedSegmentIndex = targetIndex
+        if (speakPlaybackFrom(playback, targetIndex)) {
+            updateStatus("Reading from selected position.")
+            listeners.forEach { it.onStateChanged(state) }
+        } else {
+            finishWithStatus("Could not seek to the selected reading position.")
+        }
+    }
+
+    fun setSpeechRate(rate: Float): Boolean {
+        val context = appContext ?: return false
+        val safeRate = rate.coerceIn(AppPreferences.MIN_SPEECH_RATE, AppPreferences.MAX_SPEECH_RATE)
+        AppPreferences.setSpeechRate(context, safeRate)
+        val applied = speechManager?.setSpeechRate(safeRate) == true
+        val playback = currentPlayback
+        if (applied && state == ReaderState.SPEAKING && playback != null) {
+            speakPlaybackFrom(playback, playback.currentSegmentIndex)
+        }
+        return applied
+    }
+
     fun readDemoText() {
         val started = speechManager?.speak("屏幕朗读测试。请先确认中文语音可以正常播放。") == true
         if (started) {
@@ -968,17 +1008,25 @@ object ScreenReaderController {
     }
 
     private fun speakOcrOutput(output: OcrOutput): Boolean {
-        if (output.readSegments.isEmpty()) {
+        val playableOutput = if (output.readSegments.isEmpty()) {
+            output.copy(readSegments = output.text.toCorrectionReadSegments())
+        } else {
+            output
+        }
+        if (playableOutput.readSegments.isEmpty()) {
             return speechManager?.speak(output.text) == true
         }
 
-        val playback = PlaybackSession(output = output, segmentTexts = output.readSegments.map { it.text })
+        val playback = PlaybackSession(
+            output = playableOutput,
+            segmentTexts = playableOutput.readSegments.map { it.text }
+        )
         currentPlayback = playback
         pausedSegmentIndex = 0
         val started = speakPlaybackFrom(playback, 0)
         if (started) {
-            output.readSegments.firstOrNull()?.let { segment ->
-                emitReadingHighlight(output, segment)
+            playableOutput.readSegments.firstOrNull()?.let { segment ->
+                emitReadingHighlight(playableOutput, segment)
             }
         }
         return started
@@ -1101,6 +1149,11 @@ object ScreenReaderController {
         PAUSED
     }
 
+    data class PlaybackProgress(
+        val currentSegment: Int,
+        val totalSegments: Int
+    )
+
     private data class PlaybackSession(
         val output: OcrOutput,
         val segmentTexts: List<String>,
@@ -1165,4 +1218,5 @@ object ScreenReaderController {
     private const val SCROLLABLE_SAFE_EDGE_RATIO = 0.12f
     private const val SCROLLABLE_SAFE_EDGE_MIN_PX = 120
     private const val CORRECTED_TEXT_SEGMENT_CHARS = 120
+    const val PLAYBACK_PROGRESS_MAX = 1000
 }
