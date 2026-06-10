@@ -120,7 +120,7 @@ class OverlayService : Service(),
         val params = overlayParams ?: createOverlayLayoutParams()
 
         installButtonActionHandler(button, view, params)
-        installPauseActionHandler(pauseButton)
+        installPauseActionHandler(pauseButton, view, params)
         installDragHandler(view, params)
         installProgressHandler(progressSeekBar, progressText)
 
@@ -257,14 +257,59 @@ class OverlayService : Service(),
         })
     }
 
-    private fun installPauseActionHandler(button: ImageButton) {
-        button.setOnClickListener {
-            if (ScreenReaderController.isSpeaking()) {
-                ScreenReaderController.pauseSpeaking()
-            } else if (ScreenReaderController.isPaused()) {
-                ScreenReaderController.resumeSpeaking()
+    private fun installPauseActionHandler(
+        button: ImageButton,
+        view: View,
+        params: WindowManager.LayoutParams
+    ) {
+        button.setOnTouchListener(object : View.OnTouchListener {
+            private var initialX = 0
+            private var initialY = 0
+            private var initialTouchX = 0f
+            private var initialTouchY = 0f
+            private var moved = false
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        moved = false
+                        return true
+                    }
+
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - initialTouchX).toInt()
+                        val dy = (event.rawY - initialTouchY).toInt()
+                        if (kotlin.math.abs(dx) > DRAG_THRESHOLD_PX ||
+                            kotlin.math.abs(dy) > DRAG_THRESHOLD_PX
+                        ) {
+                            moved = true
+                            params.x = initialX + dx
+                            params.y = initialY + dy
+                            windowManager.updateViewLayout(view, params)
+                        }
+                        return true
+                    }
+
+                    MotionEvent.ACTION_UP -> {
+                        if (!moved) {
+                            if (ScreenReaderController.isSpeaking()) {
+                                ScreenReaderController.pauseSpeaking()
+                            } else if (ScreenReaderController.isPaused()) {
+                                ScreenReaderController.resumeSpeaking()
+                            }
+                        }
+                        return true
+                    }
+
+                    MotionEvent.ACTION_CANCEL -> return true
+                }
+                return true
             }
-        }
+        })
     }
 
     private fun createOverlayLayoutParams(): WindowManager.LayoutParams {
@@ -586,6 +631,7 @@ class OverlayService : Service(),
         private const val NOTIFICATION_ID = 1001
         private const val REDO_OCR_LONG_PRESS_MS = 1000L
         private const val PROCESSING_ROTATION_DURATION_MS = 900L
+        private const val DRAG_THRESHOLD_PX = 8
 
         @Volatile
         var isRunning: Boolean = false
