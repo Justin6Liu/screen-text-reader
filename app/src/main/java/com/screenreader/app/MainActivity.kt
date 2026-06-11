@@ -34,6 +34,7 @@ import com.screenreader.app.llm.LlmPreferences
 import com.screenreader.app.llm.Provider
 import com.screenreader.app.overlay.OverlayService
 import com.screenreader.app.runtime.AppPreferences
+import com.screenreader.app.runtime.DeveloperAccessLevel
 import com.screenreader.app.runtime.OcrMode
 import com.screenreader.app.runtime.ScreenReaderController
 
@@ -338,10 +339,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         }
 
         developerModeButton.setOnClickListener {
-            if (AppPreferences.isDeveloperModeEnabled(this)) {
-                AppPreferences.setDeveloperModeEnabled(this, false)
+            val currentAccess = AppPreferences.getDeveloperAccessLevel(this)
+            if (currentAccess != DeveloperAccessLevel.NONE) {
+                AppPreferences.setDeveloperAccessLevel(this, DeveloperAccessLevel.NONE)
                 developerPasswordInput.text.clear()
-                Toast.makeText(this, text("Developer mode is off.", "开发者模式已关闭。"), Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, text("Advanced mode is off.", "高级模式已关闭。"), Toast.LENGTH_SHORT).show()
             } else {
                 val password = developerPasswordInput.text.toString()
                 if (password.isBlank()) {
@@ -351,13 +353,26 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
                     Toast.makeText(this, text("Enter developer password.", "请输入开发者密码。"), Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                if (password == DEVELOPER_PASSWORD) {
-                    AppPreferences.setDeveloperModeEnabled(this, true)
-                    developerPasswordInput.text.clear()
-                    Toast.makeText(this, text("Developer mode is on.", "开发者模式已开启。"), Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, text("Incorrect password.", "密码错误。"), Toast.LENGTH_SHORT).show()
+                val accessLevel = when (password) {
+                    CONFIGURATION_PASSWORD -> DeveloperAccessLevel.CONFIGURATION
+                    FULL_DEVELOPER_PASSWORD -> DeveloperAccessLevel.FULL
+                    else -> null
                 }
+                if (accessLevel == null) {
+                    Toast.makeText(this, text("Incorrect password.", "密码错误。"), Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                AppPreferences.setDeveloperAccessLevel(this, accessLevel)
+                developerPasswordInput.text.clear()
+                Toast.makeText(
+                    this,
+                    if (accessLevel == DeveloperAccessLevel.FULL) {
+                        text("Full developer mode is on.", "完整开发者模式已开启。")
+                    } else {
+                        text("Configuration mode is on.", "配置模式已开启。")
+                    },
+                    Toast.LENGTH_SHORT
+                ).show()
             }
             refreshStatus()
         }
@@ -458,8 +473,10 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         val batteryIgnored = isIgnoringBatteryOptimizations()
         val accessibilityReady = ScreenReaderController.isAccessibilityReady()
         val overlayRunning = OverlayService.isRunning
-        val developerMode = AppPreferences.isDeveloperModeEnabled(this)
-        applyLanguage(developerMode)
+        val accessLevel = AppPreferences.getDeveloperAccessLevel(this)
+        val advancedMode = accessLevel != DeveloperAccessLevel.NONE
+        val fullDeveloperMode = accessLevel == DeveloperAccessLevel.FULL
+        applyLanguage(accessLevel)
         updateOcrModeSelection()
         updateAiModelSelection()
 
@@ -470,16 +487,18 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             appendLine("${text("Accessibility service", "无障碍服务")}: ${if (accessibilityReady) text("Connected", "已连接") else text("Not connected", "未连接")}")
             appendLine("${text("Floating button", "悬浮按钮")}: ${if (overlayRunning) text("Running", "运行中") else text("Stopped", "已停止")}")
             appendLine("${text("Battery optimization", "电池优化")}: ${if (batteryIgnored) text("Ignored", "已忽略") else text("Default", "默认")}")
-            append("${text("Developer mode", "开发者模式")}: ${onOffText(developerMode)}")
-            if (developerMode) {
+            append("${text("Advanced access", "高级权限")}: ${developerAccessLabel(accessLevel)}")
+            if (advancedMode) {
                 appendLine()
-                appendLine("${text("OCR debug mode", "OCR 调试框")}: ${onOffText(AppPreferences.isOcrDebugModeEnabled(this@MainActivity))}")
-                appendLine("${text("Save debug screenshots", "保存调试截图")}: ${onOffText(AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity))}")
-                appendLine("${text("Text console", "识别文字显示")}: ${onOffText(AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity))}")
-                appendLine("${text("Reading highlight", "朗读高亮")}: ${onOffText(AppPreferences.isHighlightReadingLineEnabled(this@MainActivity))}")
-                appendLine("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
-                appendLine("${text("Auto scroll capture", "自动滚动整图识别")}: ${onOffText(AppPreferences.isAutoScrollCaptureEnabled(this@MainActivity))}")
-                appendLine("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
+                if (fullDeveloperMode) {
+                    appendLine("${text("OCR debug mode", "OCR 调试框")}: ${onOffText(AppPreferences.isOcrDebugModeEnabled(this@MainActivity))}")
+                    appendLine("${text("Save debug screenshots", "保存调试截图")}: ${onOffText(AppPreferences.isSaveDebugScreenshotsEnabled(this@MainActivity))}")
+                    appendLine("${text("Text console", "识别文字显示")}: ${onOffText(AppPreferences.isRecognizedTextConsoleEnabled(this@MainActivity))}")
+                    appendLine("${text("Reading highlight", "朗读高亮")}: ${onOffText(AppPreferences.isHighlightReadingLineEnabled(this@MainActivity))}")
+                    appendLine("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
+                    appendLine("${text("Auto scroll capture", "自动滚动整图识别")}: ${onOffText(AppPreferences.isAutoScrollCaptureEnabled(this@MainActivity))}")
+                    appendLine("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
+                }
                 appendLine("${text("OCR mode", "OCR 模式")}: ${ocrModeLabel(AppPreferences.getOcrMode(this@MainActivity))}")
                 append("${text("AI correction", "AI 修正")}: ${aiCorrectionStatusText()}")
             }
@@ -489,8 +508,8 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         updateSpeechRateControl()
         updatePlaybackProgressControl()
         lastRunTimingText.text = lastRunTimingLabel()
-        updateDeveloperControlVisibility(developerMode)
-        val showConsole = developerMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
+        updateDeveloperControlVisibility(accessLevel)
+        val showConsole = fullDeveloperMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
         val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
         val showAiDetails = AppPreferences.getOcrMode(this) == OcrMode.AI_BOOST
         recognizedTextConsoleTitle.visibility = visibility
@@ -500,7 +519,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             beforeLabel = text("Raw OCR text before AI:", "AI 修正前的原始 OCR 文字："),
             afterLabel = text("Final text used for TTS:", "最终实际朗读文字：")
         )
-        val aiConsoleVisibility = if (developerMode && showAiDetails) {
+        val aiConsoleVisibility = if (fullDeveloperMode && showAiDetails) {
             android.view.View.VISIBLE
         } else {
             android.view.View.GONE
@@ -514,7 +533,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         )
     }
 
-    private fun applyLanguage(developerMode: Boolean) {
+    private fun applyLanguage(accessLevel: DeveloperAccessLevel) {
         titleText.text = text("Screen Reader", "屏幕朗读")
         subtitleText.text = text(
             "Large controls only. Start the overlay, open a WeChat image, then tap the floating button to read text aloud.",
@@ -572,10 +591,10 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         recognizedTextConsoleTitle.text = text("Recognized Text", "识别文字")
         aiResponseConsoleTitle.text = text("Raw AI Response", "AI 原始返回内容")
         developerPasswordInput.hint = text("Password", "密码")
-        developerModeButton.text = if (developerMode) {
-            text("Turn Off Developer Mode", "关闭开发者模式")
+        developerModeButton.text = if (accessLevel != DeveloperAccessLevel.NONE) {
+            text("Turn Off Advanced Mode", "关闭高级模式")
         } else {
-            text("Developer Mode", "开发者模式")
+            text("Advanced Mode", "高级模式")
         }
         languageSwitchButton.text = if (AppPreferences.isChineseUiEnabled(this)) {
             "Switch UI to English"
@@ -584,26 +603,29 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         }
     }
 
-    private fun updateDeveloperControlVisibility(developerMode: Boolean) {
-        val developerVisibility = if (developerMode) android.view.View.VISIBLE else android.view.View.GONE
+    private fun updateDeveloperControlVisibility(accessLevel: DeveloperAccessLevel) {
+        val advancedMode = accessLevel != DeveloperAccessLevel.NONE
+        val fullDeveloperMode = accessLevel == DeveloperAccessLevel.FULL
+        val advancedVisibility = if (advancedMode) android.view.View.VISIBLE else android.view.View.GONE
+        val fullVisibility = if (fullDeveloperMode) android.view.View.VISIBLE else android.view.View.GONE
         val aiVisibility = if (
-            developerMode &&
+            advancedMode &&
             AppPreferences.getOcrMode(this) == OcrMode.AI_BOOST
         ) {
             android.view.View.VISIBLE
         } else {
             android.view.View.GONE
         }
-        debugModeCheckBox.visibility = developerVisibility
-        saveDebugScreenshotsCheckBox.visibility = developerVisibility
-        recognizedTextConsoleCheckBox.visibility = developerVisibility
-        highlightReadingLineCheckBox.visibility = developerVisibility
-        pauseResumeReadingCheckBox.visibility = developerVisibility
-        autoScrollCaptureCheckBox.visibility = developerVisibility
-        autoScrollMaxCapturesInput.visibility = developerVisibility
-        ocrModeTitle.visibility = developerVisibility
-        ocrModeGroup.visibility = developerVisibility
-        lastRunTimingText.visibility = developerVisibility
+        debugModeCheckBox.visibility = fullVisibility
+        saveDebugScreenshotsCheckBox.visibility = fullVisibility
+        recognizedTextConsoleCheckBox.visibility = fullVisibility
+        highlightReadingLineCheckBox.visibility = fullVisibility
+        pauseResumeReadingCheckBox.visibility = fullVisibility
+        autoScrollCaptureCheckBox.visibility = fullVisibility
+        autoScrollMaxCapturesInput.visibility = fullVisibility
+        ocrModeTitle.visibility = advancedVisibility
+        ocrModeGroup.visibility = advancedVisibility
+        lastRunTimingText.visibility = advancedVisibility
         aiCorrectionTitle.visibility = aiVisibility
         aiCorrectionCheckBox.visibility = aiVisibility
         aiProviderText.visibility = aiVisibility
@@ -614,14 +636,15 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         aiApiKeyInput.visibility = aiVisibility
         aiConfirmApiKeyButton.visibility = aiVisibility
         aiTestConnectionButton.visibility = aiVisibility
-        languageSwitchButton.visibility = developerVisibility
-        overlayPermissionButton.visibility = developerVisibility
-        accessibilityButton.visibility = developerVisibility
-        batteryButton.visibility = developerVisibility
-        testReadButton.visibility = developerVisibility
-        testReadNoResetButton.visibility = developerVisibility
-        stopSpeechButton.visibility = developerVisibility
-        developerPasswordInput.visibility = if (developerMode) android.view.View.GONE else android.view.View.VISIBLE
+        languageSwitchButton.visibility = advancedVisibility
+        overlayPermissionButton.visibility = advancedVisibility
+        accessibilityButton.visibility = advancedVisibility
+        batteryButton.visibility = advancedVisibility
+        testReadButton.visibility = advancedVisibility
+        testReadNoResetButton.visibility = advancedVisibility
+        stopSpeechButton.visibility = advancedVisibility
+        developerPasswordInput.visibility =
+            if (advancedMode) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     private fun text(english: String, chinese: String): String {
@@ -634,6 +657,14 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
     private fun readyText(enabled: Boolean): String {
         return if (enabled) text("Ready", "已就绪") else text("Missing", "未授予")
+    }
+
+    private fun developerAccessLabel(accessLevel: DeveloperAccessLevel): String {
+        return when (accessLevel) {
+            DeveloperAccessLevel.NONE -> text("Off", "关闭")
+            DeveloperAccessLevel.CONFIGURATION -> text("Configuration", "配置模式")
+            DeveloperAccessLevel.FULL -> text("Full developer", "完整开发者模式")
+        }
     }
 
     private fun updateSpeechRateControl() {
@@ -857,7 +888,8 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     }
 
     private companion object {
-        private const val DEVELOPER_PASSWORD = "12345678"
+        private const val CONFIGURATION_PASSWORD = "12345678"
+        private const val FULL_DEVELOPER_PASSWORD = "81726354"
         private const val SPEECH_RATE_SLIDER_MAX = 100
     }
 }

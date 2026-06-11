@@ -11,6 +11,7 @@ object AppPreferences {
     private const val KEY_HIGHLIGHT_READING_LINE = "highlight_reading_line"
     private const val KEY_PAUSE_RESUME_READING = "pause_resume_reading"
     private const val KEY_DEVELOPER_MODE = "developer_mode"
+    private const val KEY_DEVELOPER_ACCESS_LEVEL = "developer_access_level"
     private const val KEY_CHINESE_UI = "chinese_ui"
     private const val KEY_AUTO_SCROLL_CAPTURE = "auto_scroll_capture"
     private const val KEY_AUTO_SCROLL_MAX_CAPTURES = "auto_scroll_max_captures"
@@ -58,11 +59,35 @@ object AppPreferences {
     }
 
     fun isDeveloperModeEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean(KEY_DEVELOPER_MODE, false)
+        return getDeveloperAccessLevel(context) != DeveloperAccessLevel.NONE
     }
 
     fun setDeveloperModeEnabled(context: Context, enabled: Boolean) {
-        prefs(context).edit().putBoolean(KEY_DEVELOPER_MODE, enabled).apply()
+        setDeveloperAccessLevel(
+            context,
+            if (enabled) DeveloperAccessLevel.FULL else DeveloperAccessLevel.NONE
+        )
+    }
+
+    fun getDeveloperAccessLevel(context: Context): DeveloperAccessLevel {
+        val prefs = prefs(context)
+        val stored = prefs.getString(KEY_DEVELOPER_ACCESS_LEVEL, null)
+        if (stored != null) {
+            return DeveloperAccessLevel.values().firstOrNull { it.name == stored }
+                ?: DeveloperAccessLevel.NONE
+        }
+        return if (prefs.getBoolean(KEY_DEVELOPER_MODE, false)) {
+            DeveloperAccessLevel.FULL
+        } else {
+            DeveloperAccessLevel.NONE
+        }
+    }
+
+    fun setDeveloperAccessLevel(context: Context, level: DeveloperAccessLevel) {
+        prefs(context).edit()
+            .putString(KEY_DEVELOPER_ACCESS_LEVEL, level.name)
+            .putBoolean(KEY_DEVELOPER_MODE, level != DeveloperAccessLevel.NONE)
+            .apply()
     }
 
     fun isChineseUiEnabled(context: Context): Boolean {
@@ -132,4 +157,10 @@ enum class OcrMode {
     FAST,
     ACCURATE,
     AI_BOOST
+}
+
+enum class DeveloperAccessLevel {
+    NONE,
+    CONFIGURATION,
+    FULL
 }
