@@ -37,6 +37,9 @@ import com.screenreader.app.runtime.AppPreferences
 import com.screenreader.app.runtime.DeveloperAccessLevel
 import com.screenreader.app.runtime.OcrMode
 import com.screenreader.app.runtime.ScreenReaderController
+import java.security.MessageDigest
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 
 class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
@@ -343,7 +346,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             if (currentAccess != DeveloperAccessLevel.NONE) {
                 AppPreferences.setDeveloperAccessLevel(this, DeveloperAccessLevel.NONE)
                 developerPasswordInput.text.clear()
-                Toast.makeText(this, text("Advanced mode is off.", "高级模式已关闭。"), Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, text("Software settings are locked.", "软件设置已锁定。"), Toast.LENGTH_SHORT).show()
             } else {
                 val password = developerPasswordInput.text.toString()
                 if (password.isBlank()) {
@@ -355,8 +358,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
                 }
                 val accessLevel = when (password) {
                     CONFIGURATION_PASSWORD -> DeveloperAccessLevel.CONFIGURATION
-                    FULL_DEVELOPER_PASSWORD -> DeveloperAccessLevel.FULL
-                    else -> null
+                    else -> if (isFullDeveloperPassword(password)) {
+                        DeveloperAccessLevel.FULL
+                    } else {
+                        null
+                    }
                 }
                 if (accessLevel == null) {
                     Toast.makeText(this, text("Incorrect password.", "密码错误。"), Toast.LENGTH_SHORT).show()
@@ -487,7 +493,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             appendLine("${text("Accessibility service", "无障碍服务")}: ${if (accessibilityReady) text("Connected", "已连接") else text("Not connected", "未连接")}")
             appendLine("${text("Floating button", "悬浮按钮")}: ${if (overlayRunning) text("Running", "运行中") else text("Stopped", "已停止")}")
             appendLine("${text("Battery optimization", "电池优化")}: ${if (batteryIgnored) text("Ignored", "已忽略") else text("Default", "默认")}")
-            append("${text("Advanced access", "高级权限")}: ${developerAccessLabel(accessLevel)}")
+            append("${text("Software settings access", "软件设置权限")}: ${developerAccessLabel(accessLevel)}")
             if (advancedMode) {
                 appendLine()
                 if (fullDeveloperMode) {
@@ -592,9 +598,9 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         aiResponseConsoleTitle.text = text("Raw AI Response", "AI 原始返回内容")
         developerPasswordInput.hint = text("Password", "密码")
         developerModeButton.text = if (accessLevel != DeveloperAccessLevel.NONE) {
-            text("Turn Off Advanced Mode", "关闭高级模式")
+            text("Lock Software Settings", "锁定软件设置")
         } else {
-            text("Advanced Mode", "高级模式")
+            text("Unlock Software Settings", "解锁软件设置")
         }
         languageSwitchButton.text = if (AppPreferences.isChineseUiEnabled(this)) {
             "Switch UI to English"
@@ -665,6 +671,26 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             DeveloperAccessLevel.CONFIGURATION -> text("Configuration", "配置模式")
             DeveloperAccessLevel.FULL -> text("Full developer", "完整开发者模式")
         }
+    }
+
+    private fun isFullDeveloperPassword(password: String): Boolean {
+        val spec = PBEKeySpec(
+            password.toCharArray(),
+            FULL_DEVELOPER_PASSWORD_SALT.toByteArray(Charsets.UTF_8),
+            FULL_DEVELOPER_PASSWORD_ITERATIONS,
+            FULL_DEVELOPER_PASSWORD_KEY_LENGTH_BITS
+        )
+        val digest = try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(spec)
+                .encoded
+        } finally {
+            spec.clearPassword()
+        }
+        val expected = FULL_DEVELOPER_PASSWORD_HASH.chunked(2)
+            .map { it.toInt(16).toByte() }
+            .toByteArray()
+        return MessageDigest.isEqual(digest, expected)
     }
 
     private fun updateSpeechRateControl() {
@@ -889,7 +915,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
     private companion object {
         private const val CONFIGURATION_PASSWORD = "12345678"
-        private const val FULL_DEVELOPER_PASSWORD = "81726354"
+        private const val FULL_DEVELOPER_PASSWORD_SALT = "screen-reader-full-access-v1"
+        private const val FULL_DEVELOPER_PASSWORD_ITERATIONS = 120_000
+        private const val FULL_DEVELOPER_PASSWORD_KEY_LENGTH_BITS = 256
+        private const val FULL_DEVELOPER_PASSWORD_HASH =
+            "e49e923206ef87e2ed57f0af186bca47203a6c02a6e5ea03d98b4abf06990453"
         private const val SPEECH_RATE_SLIDER_MAX = 100
     }
 }
