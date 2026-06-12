@@ -187,6 +187,16 @@
             android:textColor="@color/textPrimary"
             android:textSize="16sp" />
 
+        <EditText
+            android:id="@+id/autoScrollMinSettleDelayInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Minimum scroll settle delay 300-1000 ms"
+            android:inputType="number"
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
         <TextView
             android:id="@+id/ocrModeTitle"
             android:layout_width="match_parent"
@@ -237,6 +247,17 @@
             android:background="@drawable/panel_background"
             android:padding="12dp"
             android:textColor="@color/textPrimary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/autoScrollStopReasonText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/panel_background"
+            android:padding="12dp"
+            android:textColor="@color/textPrimary"
+            android:textIsSelectable="true"
             android:textSize="16sp" />
 
         <TextView

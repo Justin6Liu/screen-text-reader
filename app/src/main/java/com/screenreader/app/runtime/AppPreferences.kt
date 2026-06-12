@@ -15,6 +15,8 @@ object AppPreferences {
     private const val KEY_CHINESE_UI = "chinese_ui"
     private const val KEY_AUTO_SCROLL_CAPTURE = "auto_scroll_capture"
     private const val KEY_AUTO_SCROLL_MAX_CAPTURES = "auto_scroll_max_captures"
+    private const val KEY_AUTO_SCROLL_MIN_SETTLE_DELAY_MS = "auto_scroll_min_settle_delay_ms"
+    private const val KEY_AUTO_SCROLL_LAST_STOP_REASON = "auto_scroll_last_stop_reason"
     private const val KEY_OCR_MODE = "ocr_mode"
     private const val KEY_SPEECH_RATE = "speech_rate"
 
@@ -121,6 +123,34 @@ object AppPreferences {
             .apply()
     }
 
+    fun getAutoScrollMinSettleDelayMs(context: Context): Int {
+        return prefs(context)
+            .getInt(KEY_AUTO_SCROLL_MIN_SETTLE_DELAY_MS, DEFAULT_AUTO_SCROLL_MIN_SETTLE_DELAY_MS)
+            .coerceIn(MIN_AUTO_SCROLL_SETTLE_DELAY_MS, MAX_AUTO_SCROLL_SETTLE_DELAY_MS)
+    }
+
+    fun setAutoScrollMinSettleDelayMs(context: Context, value: Int) {
+        prefs(context).edit()
+            .putInt(
+                KEY_AUTO_SCROLL_MIN_SETTLE_DELAY_MS,
+                value.coerceIn(
+                    MIN_AUTO_SCROLL_SETTLE_DELAY_MS,
+                    MAX_AUTO_SCROLL_SETTLE_DELAY_MS
+                )
+            )
+            .apply()
+    }
+
+    fun getAutoScrollLastStopReason(context: Context): String {
+        return prefs(context).getString(KEY_AUTO_SCROLL_LAST_STOP_REASON, null).orEmpty()
+    }
+
+    fun setAutoScrollLastStopReason(context: Context, reason: String) {
+        prefs(context).edit()
+            .putString(KEY_AUTO_SCROLL_LAST_STOP_REASON, reason)
+            .apply()
+    }
+
     fun getOcrMode(context: Context): OcrMode {
         val name = prefs(context).getString(KEY_OCR_MODE, OcrMode.ACCURATE.name)
         return OcrMode.values().firstOrNull { it.name == name } ?: OcrMode.ACCURATE
@@ -148,6 +178,9 @@ object AppPreferences {
     const val DEFAULT_AUTO_SCROLL_MAX_CAPTURES = 12
     const val MIN_AUTO_SCROLL_MAX_CAPTURES = 1
     const val MAX_AUTO_SCROLL_MAX_CAPTURES = 15
+    const val DEFAULT_AUTO_SCROLL_MIN_SETTLE_DELAY_MS = 300
+    const val MIN_AUTO_SCROLL_SETTLE_DELAY_MS = 300
+    const val MAX_AUTO_SCROLL_SETTLE_DELAY_MS = 1000
     const val DEFAULT_SPEECH_RATE = 1.0f
     const val MIN_SPEECH_RATE = 0.5f
     const val MAX_SPEECH_RATE = 3.0f

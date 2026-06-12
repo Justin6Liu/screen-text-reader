@@ -78,6 +78,7 @@ class DeepSeekProvider(
     private fun buildRequestBody(text: String): JSONObject {
         return JSONObject()
             .put("model", config.model.ifBlank { DEFAULT_DEEPSEEK_MODEL })
+            .put("thinking", JSONObject().put("type", "disabled"))
             .put("temperature", 0)
             .put("messages", JSONArray().apply {
                 put(JSONObject().put("role", "system").put("content", OCR_CORRECTION_PROMPT))

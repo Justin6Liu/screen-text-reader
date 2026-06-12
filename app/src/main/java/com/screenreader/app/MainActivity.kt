@@ -72,9 +72,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
     private lateinit var pauseResumeReadingCheckBox: CheckBox
     private lateinit var autoScrollCaptureCheckBox: CheckBox
     private lateinit var autoScrollMaxCapturesInput: EditText
+    private lateinit var autoScrollMinSettleDelayInput: EditText
     private lateinit var ocrModeTitle: TextView
     private lateinit var ocrModeGroup: RadioGroup
     private lateinit var lastRunTimingText: TextView
+    private lateinit var autoScrollStopReasonText: TextView
     private lateinit var aiCorrectionTitle: TextView
     private lateinit var aiCorrectionCheckBox: CheckBox
     private lateinit var aiProviderText: TextView
@@ -131,9 +133,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         pauseResumeReadingCheckBox = findViewById(R.id.pauseResumeReadingCheckBox)
         autoScrollCaptureCheckBox = findViewById(R.id.autoScrollCaptureCheckBox)
         autoScrollMaxCapturesInput = findViewById(R.id.autoScrollMaxCapturesInput)
+        autoScrollMinSettleDelayInput = findViewById(R.id.autoScrollMinSettleDelayInput)
         ocrModeTitle = findViewById(R.id.ocrModeTitle)
         ocrModeGroup = findViewById(R.id.ocrModeGroup)
         lastRunTimingText = findViewById(R.id.lastRunTimingText)
+        autoScrollStopReasonText = findViewById(R.id.autoScrollStopReasonText)
         aiCorrectionTitle = findViewById(R.id.aiCorrectionTitle)
         aiCorrectionCheckBox = findViewById(R.id.aiCorrectionCheckBox)
         aiProviderText = findViewById(R.id.aiProviderText)
@@ -236,6 +240,31 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
 
             override fun afterTextChanged(s: Editable?) = Unit
         })
+
+        autoScrollMinSettleDelayInput.setText(
+            AppPreferences.getAutoScrollMinSettleDelayMs(this).toString()
+        )
+        autoScrollMinSettleDelayInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val value = s?.toString()?.toIntOrNull() ?: return
+                if (value in AppPreferences.MIN_AUTO_SCROLL_SETTLE_DELAY_MS..
+                    AppPreferences.MAX_AUTO_SCROLL_SETTLE_DELAY_MS
+                ) {
+                    AppPreferences.setAutoScrollMinSettleDelayMs(this@MainActivity, value)
+                }
+            }
+
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+        autoScrollMinSettleDelayInput.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                autoScrollMinSettleDelayInput.setText(
+                    AppPreferences.getAutoScrollMinSettleDelayMs(this).toString()
+                )
+            }
+        }
 
         ocrModeGroup.setOnCheckedChangeListener { _, checkedId ->
             if (suppressOcrModeSelection) return@setOnCheckedChangeListener
@@ -504,6 +533,10 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
                     appendLine("${text("Tap pause/resume", "点击暂停/继续")}: ${onOffText(AppPreferences.isPauseResumeReadingEnabled(this@MainActivity))}")
                     appendLine("${text("Auto scroll capture", "自动滚动整图识别")}: ${onOffText(AppPreferences.isAutoScrollCaptureEnabled(this@MainActivity))}")
                     appendLine("${text("Max captures", "最大截图次数")}: ${AppPreferences.getAutoScrollMaxCaptures(this@MainActivity)}")
+                    appendLine(
+                        "${text("Minimum scroll settle delay", "最短滚动稳定等待时间")}: " +
+                            "${AppPreferences.getAutoScrollMinSettleDelayMs(this@MainActivity)} ms"
+                    )
                 }
                 appendLine("${text("OCR mode", "OCR 模式")}: ${ocrModeLabel(AppPreferences.getOcrMode(this@MainActivity))}")
                 append("${text("AI correction", "AI 修正")}: ${aiCorrectionStatusText()}")
@@ -514,6 +547,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         updateSpeechRateControl()
         updatePlaybackProgressControl()
         lastRunTimingText.text = lastRunTimingLabel()
+        autoScrollStopReasonText.text = autoScrollStopReasonLabel()
         updateDeveloperControlVisibility(accessLevel)
         val showConsole = fullDeveloperMode && AppPreferences.isRecognizedTextConsoleEnabled(this)
         val visibility = if (showConsole) android.view.View.VISIBLE else android.view.View.GONE
@@ -562,6 +596,10 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         pauseResumeReadingCheckBox.text = text("Tap to pause and resume reading", "点击悬浮按钮暂停/继续朗读")
         autoScrollCaptureCheckBox.text = text("Auto scroll capture full image", "自动滚动识别长图")
         autoScrollMaxCapturesInput.hint = text("Max captures 1-15", "最大截图次数 1-15")
+        autoScrollMinSettleDelayInput.hint = text(
+            "Minimum scroll settle delay 300-1000 ms",
+            "最短滚动稳定等待时间 300-1000 毫秒"
+        )
         ocrModeTitle.text = text("OCR Mode", "OCR 模式")
         findViewById<RadioButton>(R.id.ocrFastModeButton).text = text("Fast", "快速")
         findViewById<RadioButton>(R.id.ocrAccurateModeButton).text = text("Accurate", "准确")
@@ -629,9 +667,11 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         pauseResumeReadingCheckBox.visibility = fullVisibility
         autoScrollCaptureCheckBox.visibility = fullVisibility
         autoScrollMaxCapturesInput.visibility = fullVisibility
+        autoScrollMinSettleDelayInput.visibility = fullVisibility
         ocrModeTitle.visibility = advancedVisibility
         ocrModeGroup.visibility = advancedVisibility
         lastRunTimingText.visibility = advancedVisibility
+        autoScrollStopReasonText.visibility = fullVisibility
         aiCorrectionTitle.visibility = aiVisibility
         aiCorrectionCheckBox.visibility = aiVisibility
         aiProviderText.visibility = aiVisibility
@@ -867,6 +907,58 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
                 "Last run: %.2fs from capture/scroll complete to reading start.".format(seconds),
                 "上次耗时：%.2f 秒（截图/滚动完成到开始朗读）。".format(seconds)
             )
+        }
+    }
+
+    private fun autoScrollStopReasonLabel(): String {
+        val stored = AppPreferences.getAutoScrollLastStopReason(this)
+        if (stored.isBlank()) {
+            return text(
+                "Last auto-scroll stop reason:\nNo auto-scroll run recorded yet.",
+                "上次停止滚动原因：\n尚未记录自动滚动识别。"
+            )
+        }
+
+        val parts = stored.split('|', limit = 3)
+        val code = parts.getOrNull(0).orEmpty()
+        val captures = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val detail = parts.getOrNull(2).orEmpty()
+        val reason = when (code) {
+            "RUNNING" -> text("Capture is currently running", "当前正在截图")
+            "VISUALLY_SIMILAR" -> text(
+                "Next screenshot was judged visually unchanged",
+                "下一张截图被判断为画面未变化"
+            )
+            "MAX_CAPTURES" -> text(
+                "Configured screenshot limit reached",
+                "已达到设置的最大截图次数"
+            )
+            "GESTURE_FAILED" -> text(
+                "Scroll gesture was rejected or cancelled",
+                "滚动手势被系统拒绝或取消"
+            )
+            "SCREENSHOT_FAILED" -> text(
+                "Screenshot capture failed",
+                "屏幕截图失败"
+            )
+            else -> text("Unknown reason", "未知原因")
+        }
+        val localizedDetail = when (code) {
+            "VISUALLY_SIMILAR" -> text(
+                detail,
+                "系统认为新截图与上一张几乎相同，因此停止继续滚动。"
+            )
+            "MAX_CAPTURES" -> text(detail, "已达到开发者设置中的最大截图数量。")
+            "GESTURE_FAILED" -> text(detail, "Android 或 HyperOS 未接受下一次自动滚动手势。")
+            else -> detail
+        }
+        return buildString {
+            appendLine(text("Last auto-scroll stop reason:", "上次停止滚动原因："))
+            appendLine(reason)
+            appendLine("${text("Accepted screenshots", "已接受截图数量")}: $captures")
+            if (localizedDetail.isNotBlank()) {
+                append(localizedDetail)
+            }
         }
     }
 

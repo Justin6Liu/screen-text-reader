@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import android.util.Log
 import com.screenreader.app.llm.LlmCorrectionEngine
 import com.screenreader.app.llm.LlmPreferences
 import com.screenreader.app.ocr.OcrDebugSnapshot
@@ -156,8 +157,10 @@ object ScreenReaderController {
             ?.let { AppPreferences.getAutoScrollMaxCaptures(it) }
             ?: AppPreferences.DEFAULT_AUTO_SCROLL_MAX_CAPTURES
         var previousSignature: ScreenSignature? = null
+        recordAutoScrollStopReason("RUNNING|0|Long-image capture started.")
 
-        fun finishWithCaptures() {
+        fun finishWithCaptures(reason: String) {
+            recordAutoScrollStopReason(reason)
             restoreOverlaysAfterCapture()
             if (ocrFutures.isEmpty()) {
                 finishWithStatus("Screen capture failed.")
@@ -181,18 +184,27 @@ object ScreenReaderController {
                         val previous = previousSignature
                         if (previous != null && signature.isVisuallySimilarTo(previous)) {
                             bitmap.recycle()
-                            finishWithCaptures()
+                            finishWithCaptures(
+                                "VISUALLY_SIMILAR|${ocrFutures.size}|" +
+                                    "The next screenshot looked almost identical to the previous screenshot."
+                            )
                             return@onSuccess
                         }
                         previousSignature = signature
                         ocrFutures += submitScrollableOcr(bitmap, step)
                         if (ocrFutures.size >= maxCaptures) {
-                            finishWithCaptures()
+                            finishWithCaptures(
+                                "MAX_CAPTURES|${ocrFutures.size}|" +
+                                    "Reached the configured maximum of $maxCaptures screenshots."
+                            )
                             return@onSuccess
                         }
                         service.swipeUpForMoreContent { scrolled ->
                             if (!scrolled) {
-                                finishWithCaptures()
+                                finishWithCaptures(
+                                    "GESTURE_FAILED|${ocrFutures.size}|" +
+                                        "Android rejected or cancelled the next scroll gesture."
+                                )
                             } else {
                                 waitForScrollToSettle(service) {
                                     captureStep(step + 1)
@@ -200,13 +212,23 @@ object ScreenReaderController {
                             }
                         }
                     }
-                    .onFailure {
-                        finishWithCaptures()
+                    .onFailure { error ->
+                        finishWithCaptures(
+                            "SCREENSHOT_FAILED|${ocrFutures.size}|" +
+                                (error.message ?: error.javaClass.simpleName)
+                        )
                     }
             }
         }
 
         captureStep(0)
+    }
+
+    private fun recordAutoScrollStopReason(reason: String) {
+        Log.i(AUTO_SCROLL_LOG_TAG, reason)
+        appContext?.let { context ->
+            AppPreferences.setAutoScrollLastStopReason(context, reason)
+        }
     }
 
     private fun submitScrollableOcr(bitmap: Bitmap, captureIndex: Int): Future<ScrollableOcrOutput?> {
@@ -515,11 +537,14 @@ object ScreenReaderController {
     ) {
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val startTimeMs = android.os.SystemClock.uptimeMillis()
+        val minimumDelayMs = appContext
+            ?.let { AppPreferences.getAutoScrollMinSettleDelayMs(it) }
+            ?: AppPreferences.DEFAULT_AUTO_SCROLL_MIN_SETTLE_DELAY_MS
 
         fun check() {
             val elapsedMs = android.os.SystemClock.uptimeMillis() - startTimeMs
             val quietLongEnough = service.millisSinceLastScrollEvent() >= AUTO_SCROLL_QUIET_WINDOW_MS
-            val waitedMinimum = elapsedMs >= AUTO_SCROLL_MIN_SETTLE_DELAY_MS
+            val waitedMinimum = elapsedMs >= minimumDelayMs
             if ((quietLongEnough && waitedMinimum) || elapsedMs >= AUTO_SCROLL_MAX_SETTLE_DELAY_MS) {
                 onSettled()
             } else {
@@ -1184,7 +1209,7 @@ object ScreenReaderController {
     private val CJK_UNIFIED_IDEOGRAPHS = 0x4E00..0x9FFF
 
     private const val OVERLAY_HIDE_BEFORE_CAPTURE_DELAY_MS = 120L
-    private const val AUTO_SCROLL_MIN_SETTLE_DELAY_MS = 300L
+    private const val AUTO_SCROLL_LOG_TAG = "ScreenReaderAutoScroll"
     private const val AUTO_SCROLL_QUIET_WINDOW_MS = 350L
     private const val AUTO_SCROLL_MAX_SETTLE_DELAY_MS = 1800L
     private const val AUTO_SCROLL_SETTLE_POLL_INTERVAL_MS = 100L
