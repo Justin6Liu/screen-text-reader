@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">屏幕阅读</string>
-    <string name="accessibility_service_label">Screen Reader Accessibility</string>
+    <string name="accessibility_service_label">屏幕阅读服务</string>
     <string name="setup_subtitle">Large controls only. Start the overlay, open a WeChat image, then tap the floating button to read text aloud.</string>
     <string name="debug_mode_label">Debug OCR boxes after capture</string>
     <string name="save_debug_screenshots_label">Save debug screenshots locally</string>
