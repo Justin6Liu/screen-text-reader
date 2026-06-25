@@ -10,7 +10,7 @@ object LlmCorrectionEngine {
     }
 
     fun correctWithDetails(context: Context, text: String): LlmCorrectionResult {
-        if (!LlmPreferences.isEnabled(context) || text.isBlank()) {
+        if (text.isBlank()) {
             return LlmCorrectionResult(
                 originalText = text,
                 outputText = text,

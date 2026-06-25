@@ -281,6 +281,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
                         AppPreferences.setOcrMode(this, OcrMode.AI_BOOST)
                         LlmPreferences.setProvider(this, Provider.DEEPSEEK)
                         LlmPreferences.setBaseUrl(this, DEFAULT_DEEPSEEK_BASE_URL)
+                        LlmPreferences.setModel(this, DEFAULT_DEEPSEEK_MODEL)
                         refreshStatus()
                     },
                     onCancel = {
@@ -294,16 +295,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             }
         }
 
-        aiCorrectionCheckBox.isChecked = LlmPreferences.isEnabled(this)
-        aiCorrectionCheckBox.setOnCheckedChangeListener { _: CompoundButton, isChecked: Boolean ->
-            if (isChecked && !LlmPreferences.isSecureStorageAvailable(this)) {
-                aiCorrectionCheckBox.isChecked = false
-                showSecureStorageUnavailable()
-                return@setOnCheckedChangeListener
-            }
-            LlmPreferences.setEnabled(this, isChecked)
-            refreshStatus()
-        }
+        aiCorrectionCheckBox.isChecked = true
 
         val llmConfig = LlmPreferences.getConfig(this)
         aiApiKeyInput.setText("")
@@ -605,7 +597,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         findViewById<RadioButton>(R.id.ocrAccurateModeButton).text = text("Accurate", "准确")
         findViewById<RadioButton>(R.id.ocrAiBoostModeButton).text = text("AI Boost", "AI 增强")
         aiCorrectionTitle.text = text("AI Correction", "AI 修正")
-        aiCorrectionCheckBox.text = text("Enable AI correction", "启用 AI 修正")
+        aiCorrectionCheckBox.text = text("AI correction runs automatically in AI Boost mode", "选择 AI 增强后会自动进行 AI 修正")
         aiProviderText.text = text("Provider", "服务商")
         findViewById<RadioButton>(R.id.deepSeekProviderButton).text = "DeepSeek"
         aiModelText.text = text("Model", "模型")
@@ -663,12 +655,20 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         } else {
             android.view.View.GONE
         }
+        val fullAiVisibility = if (
+            fullDeveloperMode &&
+            AppPreferences.getOcrMode(this) == OcrMode.AI_BOOST
+        ) {
+            android.view.View.VISIBLE
+        } else {
+            android.view.View.GONE
+        }
         debugModeCheckBox.visibility = fullVisibility
         saveDebugScreenshotsCheckBox.visibility = fullVisibility
         recognizedTextConsoleCheckBox.visibility = fullVisibility
         highlightReadingLineCheckBox.visibility = fullVisibility
         pauseResumeReadingCheckBox.visibility = fullVisibility
-        autoScrollCaptureCheckBox.visibility = fullVisibility
+        autoScrollCaptureCheckBox.visibility = advancedVisibility
         autoScrollMaxCapturesInput.visibility = fullVisibility
         autoScrollMinSettleDelayInput.visibility = fullVisibility
         ocrModeTitle.visibility = advancedVisibility
@@ -676,22 +676,22 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         lastRunTimingText.visibility = advancedVisibility
         autoScrollStopReasonText.visibility = fullVisibility
         aiCorrectionTitle.visibility = aiVisibility
-        aiCorrectionCheckBox.visibility = aiVisibility
-        aiProviderText.visibility = aiVisibility
-        aiProviderGroup.visibility = aiVisibility
-        aiModelText.visibility = aiVisibility
-        aiModelGroup.visibility = aiVisibility
+        aiCorrectionCheckBox.visibility = android.view.View.GONE
+        aiProviderText.visibility = fullAiVisibility
+        aiProviderGroup.visibility = fullAiVisibility
+        aiModelText.visibility = fullAiVisibility
+        aiModelGroup.visibility = fullAiVisibility
         aiApiKeyStatusText.visibility = aiVisibility
         aiApiKeyInput.visibility = aiVisibility
         aiConfirmApiKeyButton.visibility = aiVisibility
-        aiTestConnectionButton.visibility = aiVisibility
-        languageSwitchButton.visibility = advancedVisibility
+        aiTestConnectionButton.visibility = fullAiVisibility
+        languageSwitchButton.visibility = fullVisibility
         overlayPermissionButton.visibility = advancedVisibility
         accessibilityButton.visibility = advancedVisibility
         batteryButton.visibility = advancedVisibility
-        testReadButton.visibility = advancedVisibility
-        testReadNoResetButton.visibility = advancedVisibility
-        stopSpeechButton.visibility = advancedVisibility
+        testReadButton.visibility = fullVisibility
+        testReadNoResetButton.visibility = fullVisibility
+        stopSpeechButton.visibility = fullVisibility
         developerPasswordInput.visibility =
             if (advancedMode) android.view.View.GONE else android.view.View.VISIBLE
     }
@@ -882,7 +882,6 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         if (AppPreferences.getOcrMode(this) != OcrMode.AI_BOOST) {
             return text("Off (AI Boost mode not selected)", "关（未选择 AI 增强模式）")
         }
-        val enabledText = onOffText(LlmPreferences.isEnabled(this))
         val keyText = if (LlmPreferences.hasApiKey(this)) {
             text("API key configured", "API Key 已配置")
         } else if (LlmPreferences.hasBuiltInApiKey()) {
@@ -890,7 +889,7 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         } else {
             text("API key missing", "缺少 API Key")
         }
-        return "$enabledText, $keyText"
+        return text("On via AI Boost", "随 AI 增强自动开启") + ", $keyText"
     }
 
     private fun showSecureStorageUnavailable() {

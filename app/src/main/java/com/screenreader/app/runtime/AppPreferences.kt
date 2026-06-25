@@ -101,7 +101,7 @@ object AppPreferences {
     }
 
     fun isAutoScrollCaptureEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean(KEY_AUTO_SCROLL_CAPTURE, false)
+        return prefs(context).getBoolean(KEY_AUTO_SCROLL_CAPTURE, true)
     }
 
     fun setAutoScrollCaptureEnabled(context: Context, enabled: Boolean) {

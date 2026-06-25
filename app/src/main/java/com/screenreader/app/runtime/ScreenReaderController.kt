@@ -600,13 +600,6 @@ object ScreenReaderController {
             )
             return output
         }
-        if (!LlmPreferences.isEnabled(context)) {
-            updateAiResponse(
-                response = "",
-                status = "AI correction not run because AI correction is disabled."
-            )
-            return output
-        }
         if (!LlmPreferences.hasAcceptedDisclosure(context)) {
             updateAiResponse(
                 response = "",
