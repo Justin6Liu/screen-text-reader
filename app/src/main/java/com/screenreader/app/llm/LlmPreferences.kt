@@ -40,13 +40,17 @@ object LlmPreferences {
     }
 
     fun getConfig(context: Context): LlmConfig {
-        val prefs = prefs(context) ?: return LlmConfig()
+        val prefs = prefs(context)
+        if (prefs == null) {
+            return LlmConfig(apiKey = BuiltInLlmKey.deepSeekApiKey)
+        }
         val provider = prefs.getString(KEY_PROVIDER, Provider.DEEPSEEK.name)
             ?.let { value -> Provider.values().firstOrNull { it.name == value } }
             ?: Provider.DEEPSEEK
+        val storedApiKey = prefs.getString(KEY_API_KEY, "").orEmpty()
         return LlmConfig(
             provider = provider,
-            apiKey = prefs.getString(KEY_API_KEY, "").orEmpty(),
+            apiKey = storedApiKey.ifBlank { BuiltInLlmKey.deepSeekApiKey },
             model = prefs.getString(KEY_MODEL, DEFAULT_DEEPSEEK_MODEL).orEmpty().ifBlank { DEFAULT_DEEPSEEK_MODEL },
             baseUrl = prefs.getString(KEY_BASE_URL, DEFAULT_DEEPSEEK_BASE_URL).orEmpty().ifBlank { DEFAULT_DEEPSEEK_BASE_URL }
         )
@@ -63,6 +67,10 @@ object LlmPreferences {
 
     fun hasApiKey(context: Context): Boolean {
         return prefs(context)?.getString(KEY_API_KEY, "").orEmpty().isNotBlank()
+    }
+
+    fun hasBuiltInApiKey(): Boolean {
+        return BuiltInLlmKey.deepSeekApiKey.isNotBlank()
     }
 
     fun setModel(context: Context, model: String) {

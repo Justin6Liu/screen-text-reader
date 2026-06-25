@@ -619,6 +619,9 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
             LlmPreferences.hasApiKey(this) -> {
                 text("API key already configured.", "API Key 已配置。")
             }
+            LlmPreferences.hasBuiltInApiKey() -> {
+                text("Built-in API key is available.", "内置 API Key 可用。")
+            }
             else -> {
                 text("API key not configured.", "API Key 未配置。")
             }
@@ -882,6 +885,8 @@ class MainActivity : AppCompatActivity(), ScreenReaderController.StateListener {
         val enabledText = onOffText(LlmPreferences.isEnabled(this))
         val keyText = if (LlmPreferences.hasApiKey(this)) {
             text("API key configured", "API Key 已配置")
+        } else if (LlmPreferences.hasBuiltInApiKey()) {
+            text("built-in API key available", "内置 API Key 可用")
         } else {
             text("API key missing", "缺少 API Key")
         }
